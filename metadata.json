@@ -1,0 +1,6 @@
+{
+  "name": "StartupScout AI",
+  "description": "AI-powered Bangalore startup employment intelligence platform discovering real companies, jobs, internships, careers pages, and public recruitment contacts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
