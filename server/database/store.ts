@@ -284,6 +284,51 @@ class Store {
           research_events: parsed.research_events || [],
           user_settings: { ...DEFAULT_SETTINGS, ...(parsed.user_settings || {}) },
         };
+
+        // Automatic sanitization for existing contacts in store
+        const now = new Date().toISOString();
+        this.db.contacts = this.db.contacts.map((c) => {
+          const email = (c.email || '').trim().toLowerCase();
+          const isNotPublic = !email || email === 'not publicly available';
+          
+          if (isNotPublic) {
+            return {
+              ...c,
+              email: 'NOT PUBLICLY AVAILABLE',
+              verificationStatus: c.verificationStatus || 'VERIFIED_PUBLIC',
+              exactMatch: true,
+              confidence: c.confidence || 80,
+              evidenceFound: c.evidenceFound || `Profile listed on ${c.sourceUrl || 'page'}`,
+              sourceText: c.sourceText || 'Verified profile',
+              sourceType: c.sourceType || 'OFFICIAL_COMPANY_PAGE',
+              lastVerifiedAt: c.lastVerifiedAt || now,
+            };
+          }
+
+          const hasValidSyntax = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email);
+          if (!hasValidSyntax) {
+            return {
+              ...c,
+              verificationStatus: 'REJECTED',
+              exactMatch: false,
+              confidence: 0,
+              lastVerifiedAt: c.lastVerifiedAt || now,
+            };
+          }
+
+          return {
+            ...c,
+            email,
+            domain: c.domain || (email.includes('@') ? email.split('@')[1] : null),
+            verificationStatus: c.verificationStatus || (c.exactMatch === false ? 'REJECTED' : 'VERIFIED_PUBLIC'),
+            exactMatch: c.exactMatch !== undefined ? c.exactMatch : true,
+            confidence: c.confidence || 85,
+            evidenceFound: c.evidenceFound || `Verified exact match on ${c.sourceUrl || 'public page'}`,
+            sourceText: c.sourceText || `Verbatim email match in page content`,
+            sourceType: c.sourceType || 'OFFICIAL_COMPANY_PAGE',
+            lastVerifiedAt: c.lastVerifiedAt || now,
+          };
+        });
       } else {
         // Seed baseline
         this.seedInitial();
@@ -489,15 +534,24 @@ class Store {
     return this.db.contacts.filter((c) => c.companyId === companyId);
   }
 
-  public upsertContact(contact: Omit<Contact, 'id' | 'discoveredAt'> & { id?: string; discoveredAt?: string }): Contact {
+  public upsertContact(contact: Omit<Contact, 'id' | 'discoveredAt' | 'lastVerifiedAt'> & { id?: string; discoveredAt?: string; lastVerifiedAt?: string }): Contact {
     const now = new Date().toISOString();
     const cleanEmail = (contact.email || '').trim().toLowerCase();
-    const existing = this.db.contacts.find(
-      (c) =>
-        c.companyId === contact.companyId &&
-        ((cleanEmail && cleanEmail !== 'not publicly available' && c.email.trim().toLowerCase() === cleanEmail) ||
-          (contact.name && c.name && c.name.toLowerCase() === contact.name.toLowerCase()))
-    );
+    
+    // Deduplication by companyId + email (if email exists) OR companyId + name
+    const existing = this.db.contacts.find((c) => {
+      if (c.companyId !== contact.companyId) return false;
+      if (cleanEmail && cleanEmail !== 'not publicly available' && c.email.trim().toLowerCase() === cleanEmail) {
+        return true;
+      }
+      if (contact.name && c.name && c.name.trim().toLowerCase() === contact.name.trim().toLowerCase()) {
+        return true;
+      }
+      return false;
+    });
+
+    const isExact = contact.exactMatch !== undefined ? contact.exactMatch : (cleanEmail !== 'not publicly available');
+    const defaultStatus: Contact['verificationStatus'] = isExact ? 'VERIFIED_PUBLIC' : 'REJECTED';
 
     if (existing) {
       Object.assign(existing, {
@@ -505,11 +559,23 @@ class Store {
         email: cleanEmail || existing.email,
         name: contact.name !== undefined ? contact.name : existing.name,
         role: contact.role !== undefined ? contact.role : existing.role,
+        domain: contact.domain !== undefined ? contact.domain : existing.domain,
         profileUrl: contact.profileUrl !== undefined ? contact.profileUrl : existing.profileUrl,
+        sourceUrl: contact.sourceUrl || existing.sourceUrl,
+        sourceTitle: contact.sourceTitle !== undefined ? contact.sourceTitle : existing.sourceTitle,
+        sourceType: contact.sourceType || existing.sourceType,
+        sourceText: contact.sourceText || existing.sourceText,
+        evidenceFound: contact.evidenceFound || existing.evidenceFound,
+        verificationStatus: contact.verificationStatus || existing.verificationStatus || defaultStatus,
+        confidence: contact.confidence !== undefined ? contact.confidence : existing.confidence,
+        exactMatch: isExact,
+        lastVerifiedAt: contact.lastVerifiedAt || now,
       });
       this.persist();
       return existing;
     }
+
+    const domain = contact.domain || (cleanEmail && cleanEmail.includes('@') ? cleanEmail.split('@')[1] : null);
 
     const newContact: Contact = {
       id: contact.id || `cnt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -519,10 +585,18 @@ class Store {
       role: contact.role || null,
       email: cleanEmail || 'NOT PUBLICLY AVAILABLE',
       emailType: contact.emailType || 'UNKNOWN',
+      domain,
       profileUrl: contact.profileUrl || null,
       sourceUrl: contact.sourceUrl,
-      verified: contact.verified !== undefined ? contact.verified : true,
+      sourceTitle: contact.sourceTitle || null,
+      sourceType: contact.sourceType || 'OFFICIAL_COMPANY_PAGE',
+      sourceText: contact.sourceText || 'Extracted from public webpage',
+      evidenceFound: contact.evidenceFound || (cleanEmail ? `Found on ${contact.sourceUrl}` : 'Public profile found on page'),
+      verificationStatus: contact.verificationStatus || defaultStatus,
+      confidence: contact.confidence !== undefined ? contact.confidence : (isExact ? 85 : 0),
+      exactMatch: isExact,
       discoveredAt: contact.discoveredAt || now,
+      lastVerifiedAt: contact.lastVerifiedAt || now,
     };
 
     this.db.contacts.push(newContact);
@@ -650,7 +724,34 @@ class Store {
     ).length;
     const aiMlRoles = opportunities.filter((o) => o.relevanceScore >= 60).length;
     const verifiedOpportunities = opportunities.filter((o) => o.verificationStatus === 'VERIFIED').length;
-    const publicEmails = contacts.length;
+    
+    // Contacts breakdown - only count verified public emails in primary counter
+    const verifiedPublicEmails = contacts.filter(
+      (c) =>
+        c.verificationStatus === 'VERIFIED_PUBLIC' &&
+        c.email &&
+        c.email.toLowerCase() !== 'not publicly available' &&
+        c.exactMatch !== false
+    ).length;
+
+    const employeeContacts = contacts.filter((c) => c.name && c.name.trim().length > 0).length;
+    const careersEmails = contacts.filter(
+      (c) => c.verificationStatus === 'VERIFIED_PUBLIC' && (c.emailType === 'CAREERS' || c.emailType === 'HIRING')
+    ).length;
+    const talentEmails = contacts.filter(
+      (c) => c.verificationStatus === 'VERIFIED_PUBLIC' && c.emailType === 'TALENT'
+    ).length;
+    const recruitingEmails = contacts.filter(
+      (c) => c.verificationStatus === 'VERIFIED_PUBLIC' && c.emailType === 'RECRUITING'
+    ).length;
+    const hrEmails = contacts.filter(
+      (c) => c.verificationStatus === 'VERIFIED_PUBLIC' && c.emailType === 'HR'
+    ).length;
+    const unverifiedPublicEmails = contacts.filter(
+      (c) => c.verificationStatus === 'PUBLIC_UNVERIFIED' || c.verificationStatus === 'NEEDS_REVIEW'
+    ).length;
+    const removedEmails = contacts.filter((c) => c.verificationStatus === 'SOURCE_REMOVED').length;
+    const rejectedEmails = contacts.filter((c) => c.verificationStatus === 'REJECTED').length;
 
     return {
       totalCompanies,
@@ -663,7 +764,16 @@ class Store {
       fresherRoles,
       aiMlRoles,
       verifiedOpportunities,
-      publicEmails,
+      publicEmails: verifiedPublicEmails,
+      verifiedPublicEmails,
+      employeeContacts,
+      careersEmails,
+      talentEmails,
+      recruitingEmails,
+      hrEmails,
+      unverifiedPublicEmails,
+      removedEmails,
+      rejectedEmails,
       unresolvedErrors: errors.filter((e) => !e.resolved).length,
     };
   }

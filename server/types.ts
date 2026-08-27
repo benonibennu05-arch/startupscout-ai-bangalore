@@ -49,15 +49,36 @@ export type CompanyStatus =
   | 'RETRYING';
 
 export type EmailType =
+  | 'CAREERS'
   | 'RECRUITING'
   | 'HR'
-  | 'CAREERS'
   | 'TALENT'
   | 'HIRING'
   | 'FOUNDER'
   | 'CAMPUS_HIRING'
+  | 'GENERAL_COMPANY'
   | 'GENERAL_CONTACT'
   | 'UNKNOWN';
+
+export type EmailSourceType =
+  | 'OFFICIAL_CAREERS_PAGE'
+  | 'OFFICIAL_CONTACT_PAGE'
+  | 'OFFICIAL_JOB_POSTING'
+  | 'OFFICIAL_TEAM_PAGE'
+  | 'OFFICIAL_COMPANY_PAGE'
+  | 'BANGALORE_STARTUP_MAP'
+  | 'PUBLIC_PROFESSIONAL_PROFILE'
+  | 'PUBLIC_JOB_BOARD'
+  | 'OTHER_PUBLIC_SOURCE'
+  | 'MAILTO';
+
+export type EmailVerificationStatus =
+  | 'VERIFIED_PUBLIC'
+  | 'PUBLIC_UNVERIFIED'
+  | 'NEEDS_REVIEW'
+  | 'SOURCE_REMOVED'
+  | 'REJECTED'
+  | 'NOT_FOUND';
 
 export type ResearchStage =
   | 'DISCOVER_COMPANIES'
@@ -142,12 +163,52 @@ export interface Contact {
   companyName: string;
   name?: string | null; // Named recruiter, talent partner, founder or null if generic inbox
   role?: string | null; // e.g. "Talent Acquisition Manager", "Founder & CEO"
-  email: string; // Publicly displayed email, or "NOT PUBLICLY AVAILABLE" if only person name/role was found
+  email: string; // Exact public email, or "NOT PUBLICLY AVAILABLE" if only person profile found
   emailType: EmailType;
+  domain?: string | null;
   profileUrl?: string | null; // LinkedIn or bio URL
   sourceUrl: string;
-  verified: boolean;
+  sourceTitle?: string | null;
+  sourceType?: EmailSourceType;
+  sourceText?: string; // Verifiable snippet / sentence where email or person was found
+  evidenceFound?: string; // Exact snippet or mailto occurrence
+  verificationStatus: EmailVerificationStatus;
+  confidence?: number; // 0 to 100 quality score
+  exactMatch?: boolean; // Must be true for verified email
   discoveredAt: string;
+  lastVerifiedAt: string;
+}
+
+export interface ContactFilter {
+  companyId?: string;
+  verificationStatus?: EmailVerificationStatus | 'ALL';
+  emailType?: EmailType | 'ALL';
+  search?: string;
+  onlyWithEmail?: boolean;
+}
+
+export interface DashboardStats {
+  totalCompanies: number;
+  researchedCompanies: number;
+  pendingCompanies: number;
+  failedCompanies: number;
+  totalOpportunities: number;
+  totalJobs: number;
+  totalInternships: number;
+  fresherRoles: number;
+  aiMlRoles: number;
+  verifiedOpportunities: number;
+  publicEmails: number;
+  verifiedPublicEmails: number;
+  employeeContacts: number;
+  careersEmails: number;
+  talentEmails: number;
+  recruitingEmails: number;
+  hrEmails: number;
+  unverifiedPublicEmails: number;
+  removedEmails: number;
+  rejectedEmails: number;
+  unresolvedErrors: number;
 }
 
 export type ResearchMode = 'FAST' | 'BALANCED' | 'DEEP';

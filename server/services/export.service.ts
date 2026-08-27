@@ -106,11 +106,17 @@ export class ExportService {
     // Sheet 3: Contacts
     const contactsData = contacts.map((ct) => ({
       'Company': ct.companyName,
+      'Name': ct.name || 'Public Inbox',
+      'Role': ct.role || 'N/A',
       'Email': ct.email,
       'Type': ct.emailType,
+      'Verification Status': ct.verificationStatus,
+      'Exact Match': ct.exactMatch ? 'YES' : 'NO',
+      'Confidence': `${ct.confidence || 0}%`,
+      'Evidence Snippet': ct.sourceText || ct.evidenceFound || 'N/A',
+      'Source Type': ct.sourceType || 'N/A',
       'Source URL': ct.sourceUrl,
-      'Verified': ct.verified ? 'YES' : 'NO',
-      'Discovered': ct.discoveredAt,
+      'Last Verified': ct.lastVerifiedAt || ct.discoveredAt,
     }));
 
     const workbook = XLSX.utils.book_new();

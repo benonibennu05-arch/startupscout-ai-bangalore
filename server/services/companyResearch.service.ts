@@ -8,7 +8,7 @@ import { emailService } from './email.service.ts';
 import { extractJobSnippetsFromHtml } from '../extractors/job.extractor.ts';
 import { extractCompanyFromStartupMapPage } from '../extractors/company.extractor.ts';
 import { logger } from '../utils/logger.ts';
-import { REAL_OPPORTUNITIES_MAP, REAL_CONTACTS_MAP } from '../crawler/companyResearcher.ts';
+import { REAL_OPPORTUNITIES_MAP } from '../crawler/companyResearcher.ts';
 
 export interface ResearchResult {
   company: Company;
@@ -114,7 +114,10 @@ export class CompanyResearchService {
                 emailType: 'FOUNDER',
                 profileUrl: p.profileUrl,
                 sourceUrl: company.startupMapUrl,
-                verified: true,
+                verificationStatus: 'VERIFIED_PUBLIC',
+                exactMatch: true,
+                evidenceFound: `Founder listed on Bangalore Startup Map profile (${company.startupMapUrl})`,
+                sourceType: 'BANGALORE_STARTUP_MAP',
               });
               discoveredContacts.push(contact);
             }
@@ -142,6 +145,8 @@ export class CompanyResearchService {
 
     // Step 3: Opportunity Discovery & Fast Local Heuristics
     const knownOpps = REAL_OPPORTUNITIES_MAP[company.name];
+
+    let careerHtmlContent: string | null = null;
 
     if (knownOpps && knownOpps.length > 0) {
       // Known authentic opportunities map
@@ -201,6 +206,7 @@ export class CompanyResearchService {
         });
 
         if (careerHtml) {
+          careerHtmlContent = careerHtml;
           const snippets = extractJobSnippetsFromHtml(careerHtml, targetUrl, company.name);
 
           for (const snippet of snippets.slice(0, 5)) {
@@ -262,39 +268,64 @@ export class CompanyResearchService {
       }
     }
 
-    // Step 4: Public Recruitment Emails & Contacts Extraction
-    const knownContacts = REAL_CONTACTS_MAP[company.name];
-
-    if (knownContacts && knownContacts.length > 0) {
-      for (const c of knownContacts) {
-        const classified = geminiService.classifyEmail(c.email);
-        const contact = store.upsertContact({
-          companyId: company.id,
-          companyName: company.name,
-          email: c.email,
-          emailType: classified.emailType,
-          sourceUrl: c.sourceUrl,
-          verified: true,
-        });
-        discoveredContacts.push(contact);
+    // Step 4: Public Recruitment Emails & Contacts Extraction (Evidence-Only)
+    // 4a. Extract from careers page HTML if available
+    if (careersUrl && careerHtmlContent) {
+      try {
+        const extractedCareers = emailService.extractAndPersistEmails(
+          careerHtmlContent,
+          careersUrl,
+          company.id,
+          company.name,
+          officialWebsite,
+          'OFFICIAL_CAREERS_PAGE'
+        );
+        discoveredContacts.push(...extractedCareers);
+      } catch (err: any) {
+        logger.debug(`Email extraction error on careers page for ${company.name}: ${err?.message}`);
       }
-    } else if (officialWebsite) {
+    }
+
+    // 4b. Extract from official website HTML
+    if (officialWebsite) {
       try {
         const siteHtml = await crawlerService.fetchHtml(officialWebsite, {
           timeoutMs: Math.min(8000, settings.requestTimeoutMs),
         });
         if (siteHtml) {
-          const extractedEmails = emailService.extractAndPersistEmails(
+          const extractedWebsite = emailService.extractAndPersistEmails(
             siteHtml,
             officialWebsite,
             company.id,
-            company.name
+            company.name,
+            officialWebsite,
+            'OFFICIAL_COMPANY_PAGE'
           );
-          discoveredContacts.push(...extractedEmails);
+          discoveredContacts.push(...extractedWebsite);
         }
       } catch (err: any) {
         logger.debug(`Email extraction error on website for ${company.name}: ${err?.message}`);
       }
+    }
+
+    if (discoveredContacts.length > 0) {
+      store.addEvent({
+        companyId: company.id,
+        companyName: company.name,
+        event: 'EMAILS_FOUND',
+        message: `Extracted ${discoveredContacts.length} verified public contact(s) with verifiable evidence.`,
+        stage: 'DISCOVER_EMAILS',
+        type: 'success',
+      });
+    } else {
+      store.addEvent({
+        companyId: company.id,
+        companyName: company.name,
+        event: 'EMAILS_NOT_FOUND',
+        message: `No verified public recruitment email found on public pages for ${company.name}.`,
+        stage: 'DISCOVER_EMAILS',
+        type: 'info',
+      });
     }
 
     // Step 5: Persist Company Record Immediately

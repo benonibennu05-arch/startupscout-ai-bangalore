@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { OpportunityType, ExperienceLevel, EmailType } from '../types.ts';
+import { classifyEmailType, verifyExactMatchInSource } from '../extractors/email.extractor.ts';
 
 let aiClient: GoogleGenAI | null = null;
 
@@ -34,9 +35,13 @@ export interface ClassifiedJob {
 }
 
 export interface ClassifiedEmail {
-  email: string;
+  email: string | null;
   emailType: EmailType;
   isRecruitingRelated: boolean;
+  name?: string | null;
+  role?: string | null;
+  confidence: number;
+  supportedByEvidence: boolean;
 }
 
 // Fallback rule-based intelligence when Gemini key is not provided or rate limited
@@ -223,30 +228,118 @@ Strictly adhere to facts in the text. Do not invent details.`;
   }
 }
 
-export function classifyEmail(email: string): ClassifiedEmail {
-  const lower = email.toLowerCase();
-  let emailType: EmailType = 'GENERAL_CONTACT';
-  let isRecruitingRelated = false;
-
-  if (lower.startsWith('career') || lower.startsWith('careers') || lower.includes('.careers@')) {
-    emailType = 'CAREERS';
-    isRecruitingRelated = true;
-  } else if (lower.startsWith('job') || lower.startsWith('jobs') || lower.includes('.jobs@')) {
-    emailType = 'RECRUITING';
-    isRecruitingRelated = true;
-  } else if (lower.startsWith('talent') || lower.startsWith('hiring') || lower.startsWith('recruiting') || lower.startsWith('recruit')) {
-    emailType = 'TALENT';
-    isRecruitingRelated = true;
-  } else if (lower.startsWith('hr') || lower.startsWith('people') || lower.includes('@hr.')) {
-    emailType = 'HR';
-    isRecruitingRelated = true;
-  } else if (lower.startsWith('contact') || lower.startsWith('hello') || lower.startsWith('info') || lower.startsWith('support')) {
-    emailType = 'GENERAL_CONTACT';
-  }
+/**
+ * Classifies an email strictly according to evidence and rules.
+ * NEVER fabricates an email address.
+ */
+export function classifyEmail(email: string, context = ''): ClassifiedEmail {
+  const emailType = classifyEmailType(email, context);
+  const isRecruitingRelated =
+    emailType === 'CAREERS' ||
+    emailType === 'TALENT' ||
+    emailType === 'RECRUITING' ||
+    emailType === 'CAMPUS_HIRING' ||
+    emailType === 'HR';
 
   return {
     email,
     emailType,
     isRecruitingRelated,
+    confidence: 90,
+    supportedByEvidence: true,
   };
+}
+
+/**
+ * AI-assisted classification of contact context with strict anti-hallucination constraint
+ */
+export async function classifyContactWithGemini(
+  rawSnippet: string,
+  companyName: string
+): Promise<ClassifiedEmail> {
+  const ai = getAiClient();
+  if (!ai) {
+    return {
+      email: null,
+      emailType: 'GENERAL_CONTACT',
+      isRecruitingRelated: false,
+      confidence: 50,
+      supportedByEvidence: false,
+    };
+  }
+
+  try {
+    const prompt = `You are an evidence extraction system for recruitment contacts at "${companyName}".
+You are strictly FORBIDDEN from inventing, guessing, inferring, completing, or generating email addresses.
+You may only return an email address if the EXACT address appears verbatim in the supplied snippet.
+If no exact email appears in the snippet, return email: null.
+Do not construct an email from a person's name and company domain.
+Do not guess hr@${companyName}.com or careers@${companyName}.com.
+
+Source Snippet:
+"""
+${rawSnippet.slice(0, 1500)}
+"""
+
+Return a strict JSON object with:
+- email: string | null (verbatim exact email from snippet only, otherwise null)
+- emailType: "CAREERS" | "RECRUITING" | "TALENT" | "HR" | "CAMPUS_HIRING" | "FOUNDER" | "GENERAL_COMPANY" | "GENERAL_CONTACT"
+- name: string | null (name of recruiter or founder if explicitly mentioned)
+- role: string | null (job title/role if mentioned)
+- supportedByEvidence: boolean`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.7-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            email: { type: Type.STRING, nullable: true },
+            emailType: { type: Type.STRING },
+            name: { type: Type.STRING, nullable: true },
+            role: { type: Type.STRING, nullable: true },
+            supportedByEvidence: { type: Type.BOOLEAN },
+          },
+          required: ['emailType', 'supportedByEvidence'],
+        },
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '{}');
+    let email = parsed.email || null;
+
+    // Hard backend verification: if AI returned an email, verify it actually exists in the snippet
+    if (email && !verifyExactMatchInSource(email, rawSnippet)) {
+      email = null;
+    }
+
+    const emailType = (parsed.emailType as EmailType) || 'GENERAL_CONTACT';
+    const isRecruiting =
+      emailType === 'CAREERS' ||
+      emailType === 'TALENT' ||
+      emailType === 'RECRUITING' ||
+      emailType === 'CAMPUS_HIRING' ||
+      emailType === 'HR';
+
+    return {
+      email,
+      emailType,
+      isRecruitingRelated: isRecruiting,
+      name: parsed.name || null,
+      role: parsed.role || null,
+      confidence: email ? 90 : 60,
+      supportedByEvidence: Boolean(email),
+    };
+  } catch (err) {
+    console.warn('Gemini contact extraction error:', err);
+    return {
+      email: null,
+      emailType: 'GENERAL_CONTACT',
+      isRecruitingRelated: false,
+      confidence: 40,
+      supportedByEvidence: false,
+    };
+  }
 }

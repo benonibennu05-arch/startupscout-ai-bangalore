@@ -11,4 +11,20 @@ export default defineConfig({
     port: 3000,
     host: '0.0.0.0',
   },
+  build: {
+    target: 'esnext',
+    minify: 'esbuild',
+    cssMinify: 'esbuild',
+    reportCompressedSize: false,
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          ui: ['lucide-react', 'motion'],
+          sheet: ['xlsx'],
+        },
+      },
+    },
+  },
 });

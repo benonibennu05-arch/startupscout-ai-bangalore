@@ -197,11 +197,41 @@ export const api = {
   },
 
   // Contacts
-  async getContacts(params: { emailType?: string; search?: string } = {}): Promise<{ total: number; contacts: Contact[] }> {
+  async getContacts(params: {
+    companyId?: string;
+    emailType?: string;
+    verificationStatus?: string;
+    search?: string;
+    onlyWithEmail?: boolean;
+  } = {}): Promise<{ total: number; contacts: Contact[] }> {
     const query = new URLSearchParams();
+    if (params.companyId) query.set('companyId', params.companyId);
     if (params.emailType) query.set('emailType', params.emailType);
+    if (params.verificationStatus) query.set('verificationStatus', params.verificationStatus);
     if (params.search) query.set('search', params.search);
+    if (params.onlyWithEmail) query.set('onlyWithEmail', 'true');
+
     const res = await fetch(`/api/contacts?${query.toString()}`);
+    return res.json();
+  },
+
+  async getContactStats(): Promise<{ success: boolean; stats: any }> {
+    const res = await fetch('/api/contacts/stats');
+    return res.json();
+  },
+
+  async verifyContact(id: string): Promise<{ success: boolean; contact: Contact }> {
+    const res = await fetch(`/api/contacts/${id}/verify`, { method: 'POST' });
+    return res.json();
+  },
+
+  async verifyAllContacts(): Promise<{ success: boolean; summary: any }> {
+    const res = await fetch('/api/contacts/verify-all', { method: 'POST' });
+    return res.json();
+  },
+
+  async cleanContacts(): Promise<{ success: boolean; summary: any }> {
+    const res = await fetch('/api/contacts/clean', { method: 'POST' });
     return res.json();
   },
 

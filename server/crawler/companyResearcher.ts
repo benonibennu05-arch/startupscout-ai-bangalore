@@ -3,6 +3,7 @@ import { Company, Opportunity, Contact, ResearchStage } from '../types.ts';
 import { store } from '../database/store.ts';
 import { fetchHtml } from './startupMapCrawler.ts';
 import { classifyJobWithGemini, classifyEmail } from '../ai/geminiClassifier.ts';
+import { emailService } from '../services/email.service.ts';
 
 // ATS domain patterns
 const ATS_PATTERNS = [
@@ -405,79 +406,6 @@ export const REAL_OPPORTUNITIES_MAP: Record<string, Array<{
   ]
 };
 
-// Known public recruitment and contact emails for Bangalore startups
-export const REAL_CONTACTS_MAP: Record<string, Array<{ email: string; sourceUrl: string }>> = {
-  'Hasura': [
-    { email: 'careers@hasura.io', sourceUrl: 'https://hasura.io/careers' },
-    { email: 'jobs@hasura.io', sourceUrl: 'https://hasura.io/careers' },
-  ],
-  'Postman': [
-    { email: 'careers@postman.com', sourceUrl: 'https://www.postman.com/company/careers' },
-    { email: 'talent@postman.com', sourceUrl: 'https://www.postman.com/company/careers' },
-  ],
-  'Sarvam AI': [
-    { email: 'careers@sarvam.ai', sourceUrl: 'https://www.sarvam.ai/careers' },
-    { email: 'contact@sarvam.ai', sourceUrl: 'https://www.sarvam.ai' },
-  ],
-  'Krutrim': [
-    { email: 'careers@olakrutrim.com', sourceUrl: 'https://olakrutrim.com/careers' },
-    { email: 'support@olakrutrim.com', sourceUrl: 'https://olakrutrim.com' },
-  ],
-  'Razorpay': [
-    { email: 'talent@razorpay.com', sourceUrl: 'https://razorpay.com/jobs' },
-    { email: 'careers@razorpay.com', sourceUrl: 'https://razorpay.com/jobs' },
-  ],
-  'CRED': [
-    { email: 'careers@cred.club', sourceUrl: 'https://careers.cred.club' },
-    { email: 'support@cred.club', sourceUrl: 'https://cred.club' },
-  ],
-  'Yellow.ai': [
-    { email: 'careers@yellow.ai', sourceUrl: 'https://yellow.ai/careers' },
-    { email: 'contact@yellow.ai', sourceUrl: 'https://yellow.ai' },
-  ],
-  'Observe.AI': [
-    { email: 'careers@observe.ai', sourceUrl: 'https://www.observe.ai/careers' },
-    { email: 'recruiting@observe.ai', sourceUrl: 'https://www.observe.ai/careers' },
-  ],
-  'Pixis': [
-    { email: 'talent@pixis.ai', sourceUrl: 'https://pixis.ai/careers' },
-    { email: 'contact@pixis.ai', sourceUrl: 'https://pixis.ai' },
-  ],
-  'BrowserStack': [
-    { email: 'careers@browserstack.com', sourceUrl: 'https://www.browserstack.com/careers' },
-    { email: 'recruiting@browserstack.com', sourceUrl: 'https://www.browserstack.com/careers' },
-  ],
-  'Swiggy': [
-    { email: 'careers@swiggy.in', sourceUrl: 'https://careers.swiggy.com' },
-    { email: 'talent@swiggy.in', sourceUrl: 'https://careers.swiggy.com' },
-  ],
-  'Zerodha': [
-    { email: 'careers@zerodha.com', sourceUrl: 'https://zerodha.com/careers' },
-    { email: 'jobs@zerodha.com', sourceUrl: 'https://zerodha.com/careers' },
-  ],
-  'Meesho': [
-    { email: 'careers@meesho.com', sourceUrl: 'https://www.meesho.io/jobs' },
-  ],
-  'Licious': [
-    { email: 'careers@licious.com', sourceUrl: 'https://www.licious.in/careers' },
-  ],
-  'InVideo': [
-    { email: 'careers@invideo.io', sourceUrl: 'https://invideo.io/careers' },
-  ],
-  'Wysa': [
-    { email: 'careers@wysa.io', sourceUrl: 'https://www.wysa.com/careers' },
-  ],
-  'Zeta': [
-    { email: 'careers@zeta.tech', sourceUrl: 'https://www.zeta.tech/careers' },
-  ],
-  'Ather Energy': [
-    { email: 'careers@atherenergy.com', sourceUrl: 'https://www.atherenergy.com/careers' },
-  ],
-  'Signzy': [
-    { email: 'careers@signzy.com', sourceUrl: 'https://signzy.com/careers' },
-  ]
-};
-
 export async function researchCompany(company: Company): Promise<{
   updatedCompany: Company;
   opportunities: Opportunity[];
@@ -704,69 +632,67 @@ export async function researchCompany(company: Company): Promise<{
     }
   }
 
-  // Stage 4: Discover Public Recruitment Emails
+// Stage 4: Discover Public Recruitment Emails Strictly With Verifiable Evidence
   const discoveredContacts: Contact[] = [];
-  const knownContacts = REAL_CONTACTS_MAP[company.name];
 
-  if (knownContacts && knownContacts.length > 0) {
-    for (const c of knownContacts) {
-      const classified = classifyEmail(c.email);
-      const contact = store.upsertContact({
-        companyId: company.id,
-        companyName: company.name,
-        email: c.email,
-        emailType: classified.emailType,
-        sourceUrl: c.sourceUrl,
-        verified: true,
-      });
-      discoveredContacts.push(contact);
+  // Scrape official careers page if available
+  if (careersUrl) {
+    try {
+      const careersHtml = await fetchHtml(careersUrl, settings.requestTimeoutMs);
+      if (careersHtml) {
+        const emails = emailService.extractAndPersistEmails(
+          careersHtml,
+          careersUrl,
+          company.id,
+          company.name,
+          officialWebsite,
+          'OFFICIAL_CAREERS_PAGE'
+        );
+        discoveredContacts.push(...emails);
+      }
+    } catch (e) {
+      console.warn(`Careers email scraping failed for ${company.name}:`, e);
     }
+  }
 
+  // Scrape official website / contact page
+  if (officialWebsite) {
+    try {
+      const siteHtml = await fetchHtml(officialWebsite, settings.requestTimeoutMs);
+      if (siteHtml) {
+        const emails = emailService.extractAndPersistEmails(
+          siteHtml,
+          officialWebsite,
+          company.id,
+          company.name,
+          officialWebsite,
+          'OFFICIAL_COMPANY_PAGE'
+        );
+        discoveredContacts.push(...emails);
+      }
+    } catch (e) {
+      console.warn(`Website email scraping failed for ${company.name}:`, e);
+    }
+  }
+
+  if (discoveredContacts.length > 0) {
     store.addEvent({
       companyId: company.id,
       companyName: company.name,
       event: 'EMAILS_FOUND',
-      message: `Extracted ${discoveredContacts.length} public recruitment contact(s): ${discoveredContacts.map((c) => c.email).join(', ')}.`,
+      message: `Discovered and verified ${discoveredContacts.length} public recruitment contact(s) with exact source evidence: ${discoveredContacts.map((c) => c.email).join(', ')}.`,
       stage: 'DISCOVER_EMAILS',
       type: 'success',
     });
-  } else if (officialWebsite) {
-    // Attempt scraping emails from official website / contact page
-    try {
-      const html = await fetchHtml(officialWebsite, settings.requestTimeoutMs);
-      if (html) {
-        const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
-        const matches = html.match(emailRegex) || [];
-        const seen = new Set<string>();
-
-        for (const rawEmail of matches) {
-          const email = rawEmail.toLowerCase();
-          if (
-            !seen.has(email) &&
-            !email.endsWith('.png') &&
-            !email.endsWith('.jpg') &&
-            !email.includes('sentry') &&
-            !email.includes('wixpress') &&
-            !email.includes('example.com') &&
-            !email.includes('domain.com')
-          ) {
-            seen.add(email);
-            const classified = classifyEmail(email);
-            const contact = store.upsertContact({
-              companyId: company.id,
-              companyName: company.name,
-              email,
-              emailType: classified.emailType,
-              sourceUrl: officialWebsite,
-              verified: true,
-            });
-            discoveredContacts.push(contact);
-          }
-        }
-      }
-    } catch (e) {
-      console.warn(`Email scraping failed for ${company.name}:`, e);
-    }
+  } else {
+    store.addEvent({
+      companyId: company.id,
+      companyName: company.name,
+      event: 'EMAILS_NOT_FOUND',
+      message: `No verified public recruitment email found on public pages for ${company.name}.`,
+      stage: 'DISCOVER_EMAILS',
+      type: 'info',
+    });
   }
 
   // Update company record

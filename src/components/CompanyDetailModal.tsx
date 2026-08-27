@@ -330,46 +330,87 @@ export const CompanyDetailModal: React.FC<CompanyDetailModalProps> = ({
                 )}
               </div>
 
-              {/* Public Recruitment Contacts */}
+              {/* Public Recruitment Contacts (Evidence-Only) */}
               <div>
-                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2.5">
-                  Public Recruitment & Contact Emails ({data.contacts.length})
-                </h3>
+                <div className="flex items-center justify-between mb-2.5">
+                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                    Verified Public Recruitment Inboxes ({data.contacts.filter((c) => c.verificationStatus === 'VERIFIED_PUBLIC' && c.exactMatch !== false).length})
+                  </h3>
+                  <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md font-semibold flex items-center gap-1">
+                    <ShieldCheck className="w-2.5 h-2.5" /> Source Evidence Guaranteed
+                  </span>
+                </div>
+
                 {data.contacts.length === 0 ? (
-                  <div className="text-xs text-gray-500 bg-gray-50 p-3 rounded-xl border border-gray-200 text-center">
-                    No public recruitment email found.
+                  <div className="text-xs text-gray-500 bg-gray-50 p-4 rounded-xl border border-gray-200 text-center space-y-1">
+                    <p className="font-semibold text-gray-700">No public email found on verified web pages.</p>
+                    <p className="text-[11px] text-gray-400">
+                      We never invent, infer, or guess email addresses. Only exact verified text from public pages is displayed.
+                    </p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {data.contacts.map((c) => (
-                      <div
-                        key={c.id}
-                        className="flex items-center justify-between p-2.5 rounded-lg border border-gray-200 bg-gray-50/50"
-                      >
-                        <div className="flex items-center gap-2 truncate">
-                          <Mail className="w-4 h-4 text-teal-600 shrink-0" />
-                          <div>
-                            <div className="text-xs font-bold text-gray-900 truncate">
-                              {c.email}
-                            </div>
-                            <div className="text-[10px] text-gray-500">
-                              Type: <span className="font-semibold">{c.emailType}</span>
-                            </div>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => handleCopyEmail(c.email)}
-                          className="p-1.5 rounded-md hover:bg-gray-200 text-gray-600 transition-colors"
-                          title="Copy Email"
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {data.contacts.map((c) => {
+                      const hasEmail = c.email && c.email.toLowerCase() !== 'not publicly available';
+                      const isVerified = c.verificationStatus === 'VERIFIED_PUBLIC' && c.exactMatch !== false;
+
+                      return (
+                        <div
+                          key={c.id}
+                          className={`p-3 rounded-xl border transition-all ${
+                            isVerified ? 'border-gray-200 bg-white shadow-2xs' : 'border-rose-200 bg-rose-50/30'
+                          }`}
                         >
-                          {copiedEmail === c.email ? (
-                            <Check className="w-3.5 h-3.5 text-emerald-600" />
-                          ) : (
-                            <Copy className="w-3.5 h-3.5" />
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-2 truncate">
+                              <Mail className={`w-4 h-4 shrink-0 ${isVerified ? 'text-teal-600' : 'text-gray-400'}`} />
+                              <div className="truncate">
+                                {c.name && <div className="text-xs font-bold text-gray-900 truncate">{c.name}</div>}
+                                <div className="text-xs font-mono font-bold text-gray-900 truncate">
+                                  {hasEmail ? c.email : 'Public profile without email'}
+                                </div>
+                              </div>
+                            </div>
+
+                            {hasEmail && (
+                              <button
+                                onClick={() => handleCopyEmail(c.email)}
+                                className="p-1 rounded-md hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors shrink-0"
+                                title="Copy Email"
+                              >
+                                {copiedEmail === c.email ? (
+                                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between text-[10px]">
+                            <span className="font-semibold text-gray-600 uppercase tracking-wider">
+                              {c.emailType?.replace('_', ' ')}
+                            </span>
+                            {c.sourceUrl && (
+                              <a
+                                href={c.sourceUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:underline flex items-center gap-0.5 truncate max-w-[130px]"
+                              >
+                                View Source <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                              </a>
+                            )}
+                          </div>
+
+                          {c.sourceText && (
+                            <p className="mt-1.5 text-[10px] text-gray-500 font-mono bg-gray-50 p-1 rounded-md line-clamp-1 border border-gray-100">
+                              "{c.sourceText}"
+                            </p>
                           )}
-                        </button>
-                      </div>
-                    ))}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
