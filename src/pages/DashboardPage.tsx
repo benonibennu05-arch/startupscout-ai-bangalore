@@ -11,6 +11,8 @@ import {
   ArrowRight,
   ExternalLink,
   ChevronRight,
+  Inbox,
+  SendHorizontal,
 } from 'lucide-react';
 import { QueueStatusResponse } from '../services/api';
 import { ResearchEvent, Opportunity, Company, Contact } from '../types';
@@ -47,7 +49,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   recentCompanies,
   recentContacts,
 }) => {
-  const stats = queueStatus?.stats;
+  const stats = queueStatus?.stats as any;
 
   return (
     <div id="dashboard-page" className="space-y-6">
@@ -60,6 +62,41 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         onStop={onStop}
         onRetryFailed={onRetryFailed}
       />
+
+      {/* Action Pipeline Quick Banner */}
+      <div className="bg-gradient-to-r from-blue-900 to-indigo-900 text-white rounded-xl p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-500/30 text-blue-200 border border-blue-400/30">
+              Active Pipeline
+            </span>
+            <span className="text-sm font-semibold">
+              {stats?.applicationsReadyCount || 0} Applications Awaiting Human Approval
+            </span>
+          </div>
+          <p className="text-xs text-blue-200/90 max-w-xl">
+            {stats?.openApplications || 0} open talent pool invitations discovered. Review drafted outreach emails, inspect official career evidence, and dispatch approved applications.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => onNavigate('open_applications')}
+            className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-xs font-semibold transition border border-white/20 flex items-center gap-1.5"
+          >
+            <Inbox className="w-3.5 h-3.5" />
+            <span>Open Apps ({stats?.openApplications || 0})</span>
+          </button>
+
+          <button
+            onClick={() => onNavigate('applications')}
+            className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-semibold transition shadow-xs flex items-center gap-1.5"
+          >
+            <SendHorizontal className="w-3.5 h-3.5" />
+            <span>Review & Send</span>
+          </button>
+        </div>
+      </div>
 
       {/* Primary Metrics Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -75,13 +112,46 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         />
         <StatCard
           id="stat-opportunities"
-          title="Jobs Discovered"
-          value={stats?.totalJobs || 0}
-          subtitle={`${stats?.verifiedOpportunities || 0} verified links`}
+          title="All Opportunities"
+          value={stats?.totalOpportunities || stats?.totalJobs || 0}
+          subtitle={`${stats?.verifiedOpportunities || 0} verified career links`}
           icon={Briefcase}
           iconColor="text-indigo-600"
           iconBg="bg-indigo-50"
           onClick={() => onNavigate('opportunities')}
+        />
+        <StatCard
+          id="stat-open-apps"
+          title="Open Applications"
+          value={stats?.openApplications || 0}
+          subtitle="Talent pool opportunities"
+          icon={Inbox}
+          iconColor="text-purple-600"
+          iconBg="bg-purple-50"
+          onClick={() => onNavigate('open_applications')}
+        />
+        <StatCard
+          id="stat-applications-ready"
+          title="Ready to Send"
+          value={stats?.applicationsReadyCount || 0}
+          subtitle="Human review queue"
+          icon={SendHorizontal}
+          iconColor="text-emerald-600"
+          iconBg="bg-emerald-50"
+          onClick={() => onNavigate('applications')}
+        />
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <StatCard
+          id="stat-aiml"
+          title="AI / ML & GenAI Roles"
+          value={stats?.aiMlRoles || 0}
+          subtitle="AI/ML Priority Filter"
+          icon={Sparkles}
+          iconColor="text-amber-600"
+          iconBg="bg-amber-50"
+          onClick={() => onNavigate('aiml')}
         />
         <StatCard
           id="stat-internships"
@@ -94,58 +164,127 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           onClick={() => onNavigate('internships')}
         />
         <StatCard
-          id="stat-aiml"
-          title="AI / ML & GenAI Roles"
-          value={stats?.aiMlRoles || 0}
-          subtitle="Relevance Score ≥ 60"
-          icon={Sparkles}
-          iconColor="text-amber-600"
-          iconBg="bg-amber-50"
-          onClick={() => onNavigate('aiml')}
-        />
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <StatCard
-          id="stat-fresher"
-          title="Fresher & Graduate Roles"
-          value={stats?.fresherRoles || 0}
-          subtitle="0-2 years experience"
-          icon={UserCheck}
-          iconColor="text-emerald-600"
-          iconBg="bg-emerald-50"
-          onClick={() => onNavigate('fresher')}
-        />
-        <StatCard
           id="stat-contacts"
           title="Public Recruitment Emails"
           value={stats?.publicEmails || 0}
-          subtitle="Scraped public contacts"
+          subtitle="Verified public contacts"
           icon={Mail}
           iconColor="text-teal-600"
           iconBg="bg-teal-50"
           onClick={() => onNavigate('contacts')}
         />
         <StatCard
-          id="stat-verified"
-          title="Verified Opportunities"
-          value={stats?.verifiedOpportunities || 0}
-          subtitle="Official careers/ATS evidence"
+          id="stat-sent-count"
+          title="Sent Applications"
+          value={stats?.sentApplicationsCount || 0}
+          subtitle="Delivered & tracked"
           icon={ShieldCheck}
           iconColor="text-blue-600"
           iconBg="bg-blue-50"
-          onClick={() => onNavigate('opportunities')}
+          onClick={() => onNavigate('applications')}
         />
-        <StatCard
-          id="stat-failed"
-          title="Unresolved Errors"
-          value={stats?.unresolvedErrors || 0}
-          subtitle="Recoverable network/pages"
-          icon={AlertTriangle}
-          iconColor="text-rose-600"
-          iconBg="bg-rose-50"
-          onClick={() => onNavigate('failed')}
-        />
+      </div>
+
+      {/* Role Category Distribution Strip */}
+      <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-xs">
+        <div className="flex items-center justify-between pb-2 mb-3 border-b border-gray-100">
+          <div>
+            <h3 className="text-xs font-bold text-gray-900 uppercase tracking-wider">
+              Comprehensive Role Distribution (All Opportunities)
+            </h3>
+            <p className="text-[11px] text-gray-500 font-medium">
+              Every job category discovered across 957+ Bangalore Startup Map companies
+            </p>
+          </div>
+          <button
+            onClick={() => onNavigate('opportunities')}
+            className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1"
+          >
+            Explore All <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-2 pt-1">
+          <div
+            onClick={() => onNavigate('aiml')}
+            className="cursor-pointer px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200/80 transition flex items-center gap-2"
+          >
+            <span className="text-xs font-bold text-amber-900">AI / ML & GenAI:</span>
+            <span className="px-1.5 py-0.5 rounded-md bg-amber-200/80 text-[11px] font-extrabold text-amber-900">
+              {stats?.aiMlRoles || 0}
+            </span>
+          </div>
+
+          <div
+            onClick={() => onNavigate('opportunities')}
+            className="cursor-pointer px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 border border-blue-200/80 transition flex items-center gap-2"
+          >
+            <span className="text-xs font-bold text-blue-900">Software & Full-Stack:</span>
+            <span className="px-1.5 py-0.5 rounded-md bg-blue-200/80 text-[11px] font-extrabold text-blue-900">
+              {stats?.softwareRoles || 0}
+            </span>
+          </div>
+
+          <div
+            onClick={() => onNavigate('opportunities')}
+            className="cursor-pointer px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 transition flex items-center gap-2"
+          >
+            <span className="text-xs font-bold text-emerald-900">Data Science & BI:</span>
+            <span className="px-1.5 py-0.5 rounded-md bg-emerald-200/80 text-[11px] font-extrabold text-emerald-900">
+              {stats?.dataRoles || 0}
+            </span>
+          </div>
+
+          <div
+            onClick={() => onNavigate('opportunities')}
+            className="cursor-pointer px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 transition flex items-center gap-2"
+          >
+            <span className="text-xs font-bold text-indigo-900">Backend Systems:</span>
+            <span className="px-1.5 py-0.5 rounded-md bg-indigo-200/80 text-[11px] font-extrabold text-indigo-900">
+              {stats?.backendRoles || 0}
+            </span>
+          </div>
+
+          <div
+            onClick={() => onNavigate('opportunities')}
+            className="cursor-pointer px-3 py-1.5 rounded-lg bg-cyan-50 hover:bg-cyan-100 border border-cyan-200/80 transition flex items-center gap-2"
+          >
+            <span className="text-xs font-bold text-cyan-900">Frontend & UI:</span>
+            <span className="px-1.5 py-0.5 rounded-md bg-cyan-200/80 text-[11px] font-extrabold text-cyan-900">
+              {stats?.frontendRoles || 0}
+            </span>
+          </div>
+
+          <div
+            onClick={() => onNavigate('opportunities')}
+            className="cursor-pointer px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 border border-purple-200/80 transition flex items-center gap-2"
+          >
+            <span className="text-xs font-bold text-purple-900">Product & Design:</span>
+            <span className="px-1.5 py-0.5 rounded-md bg-purple-200/80 text-[11px] font-extrabold text-purple-900">
+              {stats?.productRoles || 0}
+            </span>
+          </div>
+
+          <div
+            onClick={() => onNavigate('internships')}
+            className="cursor-pointer px-3 py-1.5 rounded-lg bg-pink-50 hover:bg-pink-100 border border-pink-200/80 transition flex items-center gap-2"
+          >
+            <span className="text-xs font-bold text-pink-900">Internships & Trainees:</span>
+            <span className="px-1.5 py-0.5 rounded-md bg-pink-200/80 text-[11px] font-extrabold text-pink-900">
+              {stats?.totalInternships || 0}
+            </span>
+          </div>
+
+          <div
+            onClick={() => onNavigate('opportunities')}
+            className="cursor-pointer px-3 py-1.5 rounded-lg bg-teal-50 hover:bg-teal-100 border border-teal-200/80 transition flex items-center gap-2"
+          >
+            <span className="text-xs font-bold text-teal-900">Marketing, Sales & Ops:</span>
+            <span className="px-1.5 py-0.5 rounded-md bg-teal-200/80 text-[11px] font-extrabold text-teal-900">
+              {(stats?.marketingRoles || 0) + (stats?.salesRoles || 0) + (stats?.operationsRoles || 0)}
+            </span>
+          </div>
+        </div>
       </div>
 
       {/* Two Column Layout: Recent High-Relevance Opportunities & Companies */}

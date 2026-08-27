@@ -8,9 +8,11 @@ import { contactsRouter } from './contacts.routes.ts';
 import { researchRouter } from './research.routes.ts';
 import { exportRouter } from './export.routes.ts';
 import { settingsRouter } from './settings.routes.ts';
+import { applicationsRouter } from './applications.routes.ts';
 import { exportService } from '../services/export.service.ts';
 import { verificationService } from '../services/verification.service.ts';
 import { companyResearchService } from '../services/companyResearch.service.ts';
+import { monitoringService } from '../services/monitoring.service.ts';
 
 export const apiRouter = Router();
 
@@ -22,6 +24,7 @@ apiRouter.use('/contacts', contactsRouter);
 apiRouter.use('/research', researchRouter);
 apiRouter.use('/export', exportRouter);
 apiRouter.use('/settings', settingsRouter);
+apiRouter.use('/', applicationsRouter);
 
 // --- Direct top-level aliases for frontend compatibility ---
 apiRouter.get('/status', (req, res) => {
@@ -56,6 +59,49 @@ apiRouter.get('/events/stream', (req, res) => {
   });
 });
 
+// --- Monitoring Endpoints ---
+apiRouter.get('/monitoring/status', (req, res) => {
+  const runs = store.getMonitoringRuns();
+  const sources = store.getMonitoringSources();
+  res.json({
+    success: true,
+    lastRun: runs[0] || null,
+    totalSources: sources.length,
+    sources,
+    recentRuns: runs.slice(0, 10),
+  });
+});
+
+apiRouter.post('/monitoring/trigger', async (req, res) => {
+  const limit = req.body.limit ? parseInt(req.body.limit, 10) : 10;
+  try {
+    const run = await monitoringService.runMonitoringCycle(limit);
+    res.json({ success: true, run });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Monitoring run failed' });
+  }
+});
+
+// --- Notifications Endpoints ---
+apiRouter.get('/notifications', (req, res) => {
+  const list = store.getNotifications();
+  res.json({
+    success: true,
+    notifications: list,
+    unreadCount: list.filter((n) => !n.read).length,
+  });
+});
+
+apiRouter.patch('/notifications/:id/read', (req, res) => {
+  store.markNotificationRead(req.params.id);
+  res.json({ success: true });
+});
+
+apiRouter.post('/notifications/read-all', (req, res) => {
+  store.markAllNotificationsRead();
+  res.json({ success: true });
+});
+
 // --- Research Runs ---
 apiRouter.get('/runs', (req, res) => {
   res.json(store.getResearchRuns());
@@ -76,3 +122,4 @@ apiRouter.post('/errors/:id/resolve', (req, res) => {
   store.resolveError(req.params.id);
   res.json({ success: true });
 });
+

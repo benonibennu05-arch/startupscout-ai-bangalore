@@ -8,7 +8,20 @@ import {
   ResearchError,
   ResearchEvent,
   UserSettings,
+  OpenApplication,
+  Application,
+  SentEmailRecord,
+  CandidateProfile,
+  EmailProviderConfig,
+  ApplicationStatus,
+  MonitoringSource,
+  MonitoringRun,
+  AppNotification,
+  SavedJobRecord,
+  OpportunityFilter,
 } from '../types.ts';
+import { REAL_OPEN_APPLICATIONS_MAP } from '../crawler/openApplicationsMap.ts';
+import { classifyRole, generateJobFingerprint } from '../ai/roleClassifier.ts';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'database.json');
@@ -17,11 +30,75 @@ export interface DatabaseSchema {
   companies: Company[];
   opportunities: Opportunity[];
   contacts: Contact[];
+  open_applications: OpenApplication[];
+  applications: Application[];
+  sent_emails: SentEmailRecord[];
+  saved_jobs: SavedJobRecord[];
+  monitoring_sources: MonitoringSource[];
+  monitoring_runs: MonitoringRun[];
+  notifications: AppNotification[];
+  candidate_profile: CandidateProfile;
+  email_provider_config: EmailProviderConfig;
   research_runs: ResearchRun[];
   research_errors: ResearchError[];
   research_events: ResearchEvent[];
   user_settings: UserSettings;
 }
+
+export const DEFAULT_CANDIDATE_PROFILE: CandidateProfile = {
+  name: 'Teja Matta',
+  portfolio: 'https://teja-matta-portfolio.vercel.app/',
+  linkedin: 'https://www.linkedin.com/in/teja-matta-602b3531a',
+  github: 'https://github.com/teja05-45',
+  targetFocus: 'AI/ML Engineering, Generative AI, LLM Systems & Full-Stack AI Agents',
+  skills: [
+    'Python',
+    'PyTorch',
+    'TensorFlow',
+    'Generative AI',
+    'LLMs',
+    'LangChain',
+    'LlamaIndex',
+    'Transformers',
+    'AI Agents',
+    'FastAPI',
+    'TypeScript',
+    'Node.js',
+    'PostgreSQL',
+    'Docker',
+    'Data Science',
+    'Computer Vision',
+    'NLP',
+  ],
+  education: 'B.Tech in Computer Science & Engineering',
+  bio: 'Aspiring AI/ML engineer focused on building robust generative AI pipelines, LLM fine-tuning, autonomous agents, and high-performance backend microservices.',
+  resumeFileName: 'Teja_Matta_Resume.pdf',
+  resumeUploadedAt: new Date().toISOString(),
+  resumeContentText: `TEJA MATTA
+Bengaluru, India | Portfolio: https://teja-matta-portfolio.vercel.app/ | LinkedIn: https://www.linkedin.com/in/teja-matta-602b3531a | GitHub: https://github.com/teja05-45
+
+OBJECTIVE:
+Aspiring AI/ML & Software Engineer seeking internship and early-career opportunities to contribute to generative AI, large language models, agentic reasoning systems, and scalable backend platforms.
+
+SKILLS:
+- Core Languages: Python, TypeScript, JavaScript, SQL, C++, Go
+- AI/ML & Data: PyTorch, TensorFlow, Scikit-Learn, Hugging Face Transformers, LangChain, LlamaIndex, Vector DBs (Chroma, Pinecone, pgvector), NLP, Computer Vision, Speech AI
+- Backend & Cloud: Node.js, Express, FastAPI, PostgreSQL, MongoDB, Redis, Docker, Git, REST APIs, GraphQL, Linux
+
+PROJECTS:
+- Autonomous Multi-Agent Research Assistant: Built LLM agent framework using LangChain, Tool Use, and ChromaDB for automated technical document synthesis.
+- Real-time Speech-to-Text & Sentiment Intelligence: Developed streaming audio transcription pipeline with fine-tuned Whisper & FastAPI.
+- High-Performance API Gateway & GraphQL Aggregator: Designed scalable microservices layer in Python & TypeScript with PostgreSQL backend.`,
+};
+
+export const DEFAULT_EMAIL_CONFIG: EmailProviderConfig = {
+  provider: 'SIMULATED_TEST_PROVIDER',
+  senderName: 'Teja Matta',
+  senderEmail: 'benoni.bennu05@gmail.com',
+  dailySendLimit: 20,
+  openAppCooldownDays: 30,
+  safetyDelayMs: 1500,
+};
 
 const DEFAULT_SETTINGS: UserSettings = {
   targetRoles: [
@@ -254,6 +331,11 @@ class Store {
     companies: [],
     opportunities: [],
     contacts: [],
+    open_applications: [],
+    applications: [],
+    sent_emails: [],
+    candidate_profile: { ...DEFAULT_CANDIDATE_PROFILE },
+    email_provider_config: { ...DEFAULT_EMAIL_CONFIG },
     research_runs: [],
     research_errors: [],
     research_events: [],
@@ -279,14 +361,55 @@ class Store {
           companies: parsed.companies || [],
           opportunities: parsed.opportunities || [],
           contacts: parsed.contacts || [],
+          open_applications: parsed.open_applications || [],
+          applications: parsed.applications || [],
+          sent_emails: parsed.sent_emails || [],
+          saved_jobs: parsed.saved_jobs || [],
+          monitoring_sources: parsed.monitoring_sources || [],
+          monitoring_runs: parsed.monitoring_runs || [],
+          notifications: parsed.notifications || [],
+          candidate_profile: { ...DEFAULT_CANDIDATE_PROFILE, ...(parsed.candidate_profile || {}) },
+          email_provider_config: { ...DEFAULT_EMAIL_CONFIG, ...(parsed.email_provider_config || {}) },
           research_runs: parsed.research_runs || [],
           research_errors: parsed.research_errors || [],
           research_events: parsed.research_events || [],
           user_settings: { ...DEFAULT_SETTINGS, ...(parsed.user_settings || {}) },
         };
 
-        // Automatic sanitization for existing contacts in store
         const now = new Date().toISOString();
+
+        // Auto-migrate opportunities to guarantee category, aiMlRelevance, personalMatchScore & fingerprint
+        this.db.opportunities = this.db.opportunities.map((opp) => {
+          const classification = classifyRole(
+            opp.title,
+            opp.description || '',
+            opp.companyName,
+            opp.location,
+            this.db.candidate_profile
+          );
+
+          return {
+            ...opp,
+            category: opp.category || classification.category,
+            aiMlRelevance: opp.aiMlRelevance || classification.aiMlRelevance,
+            type: opp.type || classification.type,
+            experienceLevel: opp.experienceLevel || classification.experienceLevel,
+            remote: opp.remote || classification.remote,
+            skills: opp.skills && opp.skills.length > 0 ? opp.skills : classification.skills,
+            relevanceScore: opp.relevanceScore !== undefined ? opp.relevanceScore : classification.relevanceScore,
+            personalMatchScore: opp.personalMatchScore !== undefined ? opp.personalMatchScore : classification.personalMatchScore,
+            jobFingerprint: opp.jobFingerprint || classification.jobFingerprint,
+            isNew: opp.isNew !== undefined ? opp.isNew : false,
+            firstSeenAt: opp.firstSeenAt || opp.discoveredAt || now,
+            lastSeenAt: opp.lastSeenAt || opp.discoveredAt || now,
+            lastVerifiedAt: opp.lastVerifiedAt || opp.discoveredAt || now,
+            status: opp.status || 'OPEN',
+            verificationStatus: opp.verificationStatus || 'VERIFIED',
+            confidence: opp.confidence || 'HIGH',
+          };
+        });
+
+        // Automatic sanitization for existing contacts in store
         this.db.contacts = this.db.contacts.map((c) => {
           const email = (c.email || '').trim().toLowerCase();
           const isNotPublic = !email || email === 'not publicly available';
@@ -329,6 +452,11 @@ class Store {
             lastVerifiedAt: c.lastVerifiedAt || now,
           };
         });
+
+        // Ensure open applications exist for seed companies if empty
+        if (this.db.open_applications.length === 0) {
+          this.seedOpenApplications();
+        }
       } else {
         // Seed baseline
         this.seedInitial();
@@ -337,6 +465,31 @@ class Store {
     } catch (err) {
       console.error('Error initializing store:', err);
       this.seedInitial();
+    }
+  }
+
+  private seedOpenApplications() {
+    const now = new Date().toISOString();
+    for (const [companyName, seed] of Object.entries(REAL_OPEN_APPLICATIONS_MAP)) {
+      const comp = this.db.companies.find((c) => c.name.toLowerCase() === companyName.toLowerCase());
+      if (comp) {
+        this.upsertOpenApplication({
+          companyId: comp.id,
+          companyName: comp.name,
+          sourceUrl: seed.sourceUrl,
+          sourceText: seed.evidence,
+          evidence: seed.evidence,
+          contactEmail: seed.contactEmail,
+          contactName: seed.contactName,
+          contactRole: seed.contactRole,
+          verificationStatus: seed.contactEmail ? 'VERIFIED_PUBLIC' : 'NOT_FOUND',
+          relevanceScore: seed.relevanceScore,
+          status: 'OPEN',
+          hasVerifiedEmail: Boolean(seed.contactEmail),
+          discoveredAt: now,
+          updatedAt: now,
+        });
+      }
     }
   }
 
@@ -470,8 +623,85 @@ class Store {
   }
 
   // --- Opportunities ---
-  public getOpportunities(): Opportunity[] {
-    return this.db.opportunities;
+  public getOpportunities(filter?: OpportunityFilter & { sort?: 'relevance' | 'match' | 'newest' | 'company' }): Opportunity[] {
+    let list = this.db.opportunities;
+
+    if (filter?.companyId) {
+      list = list.filter((o) => o.companyId === filter.companyId);
+    }
+    if (filter?.category && filter.category !== 'ALL') {
+      list = list.filter((o) => o.category === filter.category);
+    }
+    if (filter?.type && filter.type !== 'ALL') {
+      list = list.filter((o) => o.type === filter.type);
+    }
+    if (filter?.aiMlRelevance && filter.aiMlRelevance !== 'ALL') {
+      list = list.filter((o) => o.aiMlRelevance === filter.aiMlRelevance);
+    }
+    if (filter?.experienceLevel && filter.experienceLevel !== 'ALL') {
+      list = list.filter((o) => o.experienceLevel === filter.experienceLevel);
+    }
+    if (filter?.remote && filter.remote !== 'ALL') {
+      list = list.filter((o) => o.remote === filter.remote);
+    }
+    if (filter?.status) {
+      list = list.filter((o) => o.status === filter.status);
+    }
+    if (filter?.verificationStatus) {
+      list = list.filter((o) => o.verificationStatus === filter.verificationStatus);
+    }
+    if (filter?.minRelevance !== undefined) {
+      list = list.filter((o) => o.relevanceScore >= filter.minRelevance!);
+    }
+    if (filter?.isFresherFriendly) {
+      list = list.filter(
+        (o) =>
+          o.experienceLevel === 'FRESHER' ||
+          o.experienceLevel === 'ENTRY_LEVEL' ||
+          o.experienceLevel === 'INTERN' ||
+          o.experienceLevel === 'JUNIOR' ||
+          o.type === 'INTERNSHIP' ||
+          o.type === 'GRADUATE'
+      );
+    }
+    if (filter?.isInternship) {
+      list = list.filter((o) => o.type === 'INTERNSHIP' || o.experienceLevel === 'INTERN');
+    }
+    if (filter?.isNew) {
+      list = list.filter((o) => o.isNew);
+    }
+    if (filter?.isSaved) {
+      const savedIds = new Set(this.db.saved_jobs.map((s) => s.opportunityId));
+      list = list.filter((o) => savedIds.has(o.id));
+    }
+    if (filter?.userApplicationStatus) {
+      list = list.filter((o) => o.userApplicationStatus === filter.userApplicationStatus);
+    }
+    if (filter?.search) {
+      const q = filter.search.toLowerCase();
+      list = list.filter(
+        (o) =>
+          o.title.toLowerCase().includes(q) ||
+          o.companyName.toLowerCase().includes(q) ||
+          o.description.toLowerCase().includes(q) ||
+          (o.skills && o.skills.some((s) => s.toLowerCase().includes(q))) ||
+          (o.category && o.category.toLowerCase().includes(q))
+      );
+    }
+
+    // Sorting
+    const sort = filter?.sort || 'relevance';
+    if (sort === 'relevance') {
+      list = [...list].sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
+    } else if (sort === 'match') {
+      list = [...list].sort((a, b) => (b.personalMatchScore || 0) - (a.personalMatchScore || 0));
+    } else if (sort === 'newest') {
+      list = [...list].sort((a, b) => new Date(b.firstSeenAt || b.discoveredAt).getTime() - new Date(a.firstSeenAt || a.discoveredAt).getTime());
+    } else if (sort === 'company') {
+      list = [...list].sort((a, b) => a.companyName.localeCompare(b.companyName));
+    }
+
+    return list;
   }
 
   public getOpportunity(id: string): Opportunity | undefined {
@@ -484,19 +714,47 @@ class Store {
 
   public upsertOpportunity(opp: Omit<Opportunity, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Opportunity {
     const now = new Date().toISOString();
-    // Deduplicate by companyId + normalized title + type
+    const classification = classifyRole(
+      opp.title,
+      opp.description || '',
+      opp.companyName,
+      opp.location,
+      this.db.candidate_profile
+    );
+
+    const category = opp.category || classification.category;
+    const aiMlRelevance = opp.aiMlRelevance || classification.aiMlRelevance;
+    const type = opp.type || classification.type;
+    const experienceLevel = opp.experienceLevel || classification.experienceLevel;
+    const remote = opp.remote || classification.remote;
+    const skills = opp.skills && opp.skills.length > 0 ? opp.skills : classification.skills;
+    const relevanceScore = opp.relevanceScore !== undefined ? opp.relevanceScore : classification.relevanceScore;
+    const personalMatchScore = opp.personalMatchScore !== undefined ? opp.personalMatchScore : classification.personalMatchScore;
+    const jobFingerprint = opp.jobFingerprint || generateJobFingerprint(opp.companyName, opp.title, opp.location);
+
+    // Deduplicate by companyId + normalized title + type OR by jobFingerprint
     const normalizedTitle = opp.title.trim().toLowerCase();
     const existing = this.db.opportunities.find(
       (o) =>
-        o.companyId === opp.companyId &&
-        o.title.trim().toLowerCase() === normalizedTitle &&
-        o.type === opp.type
+        (o.companyId === opp.companyId && o.title.trim().toLowerCase() === normalizedTitle && o.type === type) ||
+        (jobFingerprint && o.jobFingerprint === jobFingerprint)
     );
 
     if (existing) {
-      Object.assign(existing, opp, {
-        updatedAt: now,
+      Object.assign(existing, {
+        ...opp,
+        category,
+        aiMlRelevance,
+        type,
+        experienceLevel,
+        remote,
+        skills,
+        relevanceScore,
+        personalMatchScore,
+        jobFingerprint,
+        lastSeenAt: now,
         lastVerifiedAt: opp.lastVerifiedAt || now,
+        updatedAt: now,
       });
       this.persist();
       return existing;
@@ -504,6 +762,18 @@ class Store {
 
     const newOpp: Opportunity = {
       ...opp,
+      category,
+      aiMlRelevance,
+      type,
+      experienceLevel,
+      remote,
+      skills,
+      relevanceScore,
+      personalMatchScore,
+      jobFingerprint,
+      isNew: true,
+      firstSeenAt: opp.firstSeenAt || now,
+      lastSeenAt: now,
       id: opp.id || `opp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       createdAt: now,
       updatedAt: now,
@@ -523,6 +793,153 @@ class Store {
       opp.updatedAt = new Date().toISOString();
       this.persist();
     }
+  }
+
+  // --- Saved Jobs & Tracking ---
+  public getSavedJobs(): SavedJobRecord[] {
+    return this.db.saved_jobs;
+  }
+
+  public saveJob(opportunityId: string, priority: 'HIGH' | 'MEDIUM' | 'LOW' = 'HIGH', notes = ''): SavedJobRecord {
+    const opp = this.getOpportunity(opportunityId);
+    if (!opp) throw new Error(`Opportunity not found: ${opportunityId}`);
+
+    const existing = this.db.saved_jobs.find((s) => s.opportunityId === opportunityId);
+    const now = new Date().toISOString();
+
+    if (existing) {
+      existing.priority = priority;
+      if (notes) existing.notes = notes;
+      existing.updatedAt = now;
+      this.persist();
+      return existing;
+    }
+
+    const record: SavedJobRecord = {
+      id: `save_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      opportunityId,
+      companyId: opp.companyId,
+      companyName: opp.companyName,
+      title: opp.title,
+      priority,
+      notes,
+      status: 'SAVED',
+      savedAt: now,
+      updatedAt: now,
+    };
+
+    opp.isSaved = true;
+    opp.userApplicationStatus = 'SAVED';
+
+    this.db.saved_jobs.push(record);
+    this.persist();
+    return record;
+  }
+
+  public unsaveJob(opportunityId: string): boolean {
+    const idx = this.db.saved_jobs.findIndex((s) => s.opportunityId === opportunityId);
+    if (idx !== -1) {
+      this.db.saved_jobs.splice(idx, 1);
+      const opp = this.getOpportunity(opportunityId);
+      if (opp) {
+        opp.isSaved = false;
+        opp.userApplicationStatus = undefined;
+      }
+      this.persist();
+      return true;
+    }
+    return false;
+  }
+
+  public updateSavedJob(id: string, updates: Partial<SavedJobRecord>): SavedJobRecord | undefined {
+    const record = this.db.saved_jobs.find((s) => s.id === id);
+    if (record) {
+      Object.assign(record, updates, { updatedAt: new Date().toISOString() });
+      if (updates.status) {
+        const opp = this.getOpportunity(record.opportunityId);
+        if (opp) {
+          opp.userApplicationStatus = updates.status;
+        }
+      }
+      this.persist();
+      return record;
+    }
+    return undefined;
+  }
+
+  // --- Monitoring Sources & Runs ---
+  public getMonitoringSources(): MonitoringSource[] {
+    return this.db.monitoring_sources;
+  }
+
+  public upsertMonitoringSource(source: Omit<MonitoringSource, 'id'> & { id?: string }): MonitoringSource {
+    const existing = this.db.monitoring_sources.find(
+      (m) => m.companyId === source.companyId && m.sourceUrl === source.sourceUrl
+    );
+    if (existing) {
+      Object.assign(existing, source);
+      this.persist();
+      return existing;
+    }
+    const newSource: MonitoringSource = {
+      ...source,
+      id: source.id || `mon_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    };
+    this.db.monitoring_sources.push(newSource);
+    this.persist();
+    return newSource;
+  }
+
+  public getMonitoringRuns(): MonitoringRun[] {
+    return this.db.monitoring_runs;
+  }
+
+  public addMonitoringRun(run: Omit<MonitoringRun, 'id'> & { id?: string }): MonitoringRun {
+    const newRun: MonitoringRun = {
+      ...run,
+      id: run.id || `monrun_${Date.now()}`,
+    };
+    this.db.monitoring_runs.unshift(newRun);
+    if (this.db.monitoring_runs.length > 50) {
+      this.db.monitoring_runs = this.db.monitoring_runs.slice(0, 50);
+    }
+    this.persist();
+    return newRun;
+  }
+
+  // --- Notifications ---
+  public getNotifications(limit = 50): AppNotification[] {
+    return this.db.notifications.slice(0, limit);
+  }
+
+  public addNotification(notif: Omit<AppNotification, 'id' | 'createdAt' | 'read'>): AppNotification {
+    const newNotif: AppNotification = {
+      ...notif,
+      id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      createdAt: new Date().toISOString(),
+      read: false,
+    };
+    this.db.notifications.unshift(newNotif);
+    if (this.db.notifications.length > 100) {
+      this.db.notifications = this.db.notifications.slice(0, 100);
+    }
+    this.persist();
+    return newNotif;
+  }
+
+  public markNotificationRead(id: string) {
+    const n = this.db.notifications.find((item) => item.id === id);
+    if (n) {
+      n.read = true;
+      this.persist();
+    }
+  }
+
+  public markAllNotificationsRead() {
+    for (const n of this.db.notifications) {
+      n.read = true;
+    }
+    this.persist();
   }
 
   // --- Contacts ---
@@ -685,6 +1102,317 @@ class Store {
     return newEvent;
   }
 
+  // --- Open Applications ---
+  public getOpenApplications(filter?: {
+    companyId?: string;
+    status?: string;
+    onlyWithEmail?: boolean;
+    search?: string;
+  }): OpenApplication[] {
+    let list = this.db.open_applications;
+
+    if (filter?.companyId) {
+      list = list.filter((a) => a.companyId === filter.companyId);
+    }
+    if (filter?.status) {
+      list = list.filter((a) => a.status === filter.status);
+    }
+    if (filter?.onlyWithEmail) {
+      list = list.filter((a) => Boolean(a.contactEmail && a.contactEmail !== 'NOT PUBLICLY AVAILABLE'));
+    }
+    if (filter?.search) {
+      const q = filter.search.toLowerCase();
+      list = list.filter(
+        (a) =>
+          a.companyName.toLowerCase().includes(q) ||
+          a.evidence.toLowerCase().includes(q) ||
+          (a.contactEmail && a.contactEmail.toLowerCase().includes(q))
+      );
+    }
+
+    return list;
+  }
+
+  public getOpenApplication(id: string): OpenApplication | undefined {
+    return this.db.open_applications.find((a) => a.id === id);
+  }
+
+  public getOpenApplicationsForCompany(companyId: string): OpenApplication[] {
+    return this.db.open_applications.filter((a) => a.companyId === companyId);
+  }
+
+  public upsertOpenApplication(
+    data: Omit<OpenApplication, 'id' | 'createdAt' | 'updatedAt' | 'discoveredAt'> & {
+      id?: string;
+      discoveredAt?: string;
+      updatedAt?: string;
+    }
+  ): OpenApplication {
+    const now = new Date().toISOString();
+    const existing = this.db.open_applications.find(
+      (a) => a.companyId === data.companyId || (a.companyName.toLowerCase() === data.companyName.toLowerCase())
+    );
+
+    if (existing) {
+      Object.assign(existing, {
+        ...data,
+        updatedAt: now,
+      });
+      this.persist();
+      return existing;
+    }
+
+    const newApp: OpenApplication = {
+      ...data,
+      id: data.id || `open_app_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      discoveredAt: data.discoveredAt || now,
+      updatedAt: now,
+    };
+
+    this.db.open_applications.push(newApp);
+    this.persist();
+    return newApp;
+  }
+
+  public deleteOpenApplication(id: string): boolean {
+    const idx = this.db.open_applications.findIndex((a) => a.id === id);
+    if (idx !== -1) {
+      this.db.open_applications.splice(idx, 1);
+      this.persist();
+      return true;
+    }
+    return false;
+  }
+
+  // --- Applications (Draft, Ready, Sent Pipeline) ---
+  public getApplications(filter?: {
+    status?: string;
+    applicationType?: string;
+    companyId?: string;
+    search?: string;
+  }): Application[] {
+    let list = this.db.applications;
+
+    if (filter?.status && filter.status !== 'ALL') {
+      list = list.filter((a) => a.status === filter.status);
+    }
+    if (filter?.applicationType && filter.applicationType !== 'ALL') {
+      list = list.filter((a) => a.applicationType === filter.applicationType);
+    }
+    if (filter?.companyId) {
+      list = list.filter((a) => a.companyId === filter.companyId);
+    }
+    if (filter?.search) {
+      const q = filter.search.toLowerCase();
+      list = list.filter(
+        (a) =>
+          a.companyName.toLowerCase().includes(q) ||
+          a.roleTitle.toLowerCase().includes(q) ||
+          a.subject.toLowerCase().includes(q) ||
+          a.recipientEmail.toLowerCase().includes(q)
+      );
+    }
+
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  public getApplication(id: string): Application | undefined {
+    return this.db.applications.find((a) => a.id === id);
+  }
+
+  public upsertApplication(
+    data: Omit<Application, 'id' | 'createdAt' | 'updatedAt'> & {
+      id?: string;
+      createdAt?: string;
+      updatedAt?: string;
+    }
+  ): Application {
+    const now = new Date().toISOString();
+    
+    // Check if application already exists for this company + recipient + target role/open app
+    const existing = this.db.applications.find((a) => {
+      if (data.id && a.id === data.id) return true;
+      if (
+        a.companyId === data.companyId &&
+        a.recipientEmail.toLowerCase() === data.recipientEmail.toLowerCase() &&
+        (a.opportunityId === data.opportunityId || a.openApplicationId === data.openApplicationId)
+      ) {
+        return true;
+      }
+      return false;
+    });
+
+    if (existing) {
+      Object.assign(existing, {
+        ...data,
+        updatedAt: now,
+      });
+      this.persist();
+      return existing;
+    }
+
+    const newApp: Application = {
+      ...data,
+      id: data.id || `app_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      createdAt: data.createdAt || now,
+      updatedAt: now,
+    };
+
+    this.db.applications.unshift(newApp);
+    this.persist();
+    return newApp;
+  }
+
+  public updateApplicationStatus(
+    id: string,
+    status: ApplicationStatus,
+    extra?: {
+      approvedAt?: string;
+      sentAt?: string;
+      providerMessageId?: string;
+      error?: string;
+      followUpAt?: string;
+      notes?: string;
+    }
+  ): Application | null {
+    const app = this.getApplication(id);
+    if (!app) return null;
+
+    app.status = status;
+    app.updatedAt = new Date().toISOString();
+    if (extra?.approvedAt !== undefined) app.approvedAt = extra.approvedAt;
+    if (extra?.sentAt !== undefined) app.sentAt = extra.sentAt;
+    if (extra?.providerMessageId !== undefined) app.providerMessageId = extra.providerMessageId;
+    if (extra?.error !== undefined) app.error = extra.error;
+    if (extra?.followUpAt !== undefined) app.followUpAt = extra.followUpAt;
+    if (extra?.notes !== undefined) app.notes = extra.notes;
+
+    this.persist();
+    return app;
+  }
+
+  public deleteApplication(id: string): boolean {
+    const idx = this.db.applications.findIndex((a) => a.id === id);
+    if (idx !== -1) {
+      this.db.applications.splice(idx, 1);
+      this.persist();
+      return true;
+    }
+    return false;
+  }
+
+  // --- Candidate Profile & Resume Management ---
+  public getCandidateProfile(): CandidateProfile {
+    return this.db.candidate_profile || { ...DEFAULT_CANDIDATE_PROFILE };
+  }
+
+  public updateCandidateProfile(updates: Partial<CandidateProfile>): CandidateProfile {
+    this.db.candidate_profile = {
+      ...this.getCandidateProfile(),
+      ...updates,
+    };
+    this.persist();
+    return this.db.candidate_profile;
+  }
+
+  // --- Email Provider Config ---
+  public getEmailProviderConfig(): EmailProviderConfig {
+    return this.db.email_provider_config || { ...DEFAULT_EMAIL_CONFIG };
+  }
+
+  public updateEmailProviderConfig(updates: Partial<EmailProviderConfig>): EmailProviderConfig {
+    this.db.email_provider_config = {
+      ...this.getEmailProviderConfig(),
+      ...updates,
+    };
+    this.persist();
+    return this.db.email_provider_config;
+  }
+
+  // --- Sent Emails & Tracking ---
+  public getSentEmails(): SentEmailRecord[] {
+    return this.db.sent_emails || [];
+  }
+
+  public logSentEmail(record: Omit<SentEmailRecord, 'id'>): SentEmailRecord {
+    const newRecord: SentEmailRecord = {
+      ...record,
+      id: `sent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    };
+    this.db.sent_emails.unshift(newRecord);
+    this.persist();
+    return newRecord;
+  }
+
+  public updateSentEmailFollowUp(
+    id: string,
+    followUpReminderDate: string | null,
+    followUpStatus?: 'PENDING' | 'DONE' | 'CANCELLED'
+  ): SentEmailRecord | null {
+    const rec = this.db.sent_emails.find((r) => r.id === id);
+    if (rec) {
+      rec.followUpReminderDate = followUpReminderDate;
+      if (followUpStatus) rec.followUpStatus = followUpStatus;
+      this.persist();
+      return rec;
+    }
+    return null;
+  }
+
+  public getTodaySentCount(): number {
+    const today = new Date().toISOString().split('T')[0];
+    return this.db.sent_emails.filter((s) => s.sentAt && s.sentAt.startsWith(today)).length;
+  }
+
+  public canSendEmailToday(dailyLimit = 20): boolean {
+    return this.getTodaySentCount() < dailyLimit;
+  }
+
+  public isDuplicateSend(
+    companyId: string,
+    recipientEmail: string,
+    opportunityId?: string | null,
+    openApplicationId?: string | null,
+    cooldownDays = 30
+  ): { isDuplicate: boolean; reason?: string } {
+    const cleanEmail = recipientEmail.trim().toLowerCase();
+    const sentList = this.db.sent_emails.filter(
+      (s) => s.companyId === companyId && s.recipientEmail.trim().toLowerCase() === cleanEmail
+    );
+
+    if (sentList.length === 0) {
+      return { isDuplicate: false };
+    }
+
+    // Check specific opportunity duplicate
+    if (opportunityId) {
+      const matchOpp = sentList.find((s) => s.opportunityId === opportunityId);
+      if (matchOpp) {
+        return {
+          isDuplicate: true,
+          reason: `Application already sent for this specific role on ${new Date(matchOpp.sentAt).toLocaleDateString()}`,
+        };
+      }
+    }
+
+    // Check open application cooldown
+    if (openApplicationId || !opportunityId) {
+      const matchOpen = sentList.find((s) => s.openApplicationId === openApplicationId || s.applicationType === 'OPEN_APPLICATION');
+      if (matchOpen) {
+        const sentTime = new Date(matchOpen.sentAt).getTime();
+        const daysSince = (Date.now() - sentTime) / (1000 * 60 * 60 * 24);
+        if (daysSince < cooldownDays) {
+          return {
+            isDuplicate: true,
+            reason: `Open application already submitted to ${matchOpen.companyName} ${Math.round(daysSince)} days ago (${cooldownDays}-day cooldown active)`,
+          };
+        }
+      }
+    }
+
+    return { isDuplicate: false };
+  }
+
   // --- Settings ---
   public getSettings(): UserSettings {
     return this.db.user_settings;
@@ -704,7 +1432,10 @@ class Store {
     const companies = this.db.companies;
     const opportunities = this.db.opportunities;
     const contacts = this.db.contacts;
+    const openApps = this.db.open_applications;
+    const apps = this.db.applications;
     const errors = this.db.research_errors;
+    const emailConfig = this.getEmailProviderConfig();
 
     const totalCompanies = companies.length;
     const researchedCompanies = companies.filter((c) => c.status === 'COMPLETED').length;
@@ -722,9 +1453,39 @@ class Store {
         o.experienceLevel === 'INTERN' ||
         o.experienceLevel === 'JUNIOR'
     ).length;
-    const aiMlRoles = opportunities.filter((o) => o.relevanceScore >= 60).length;
+    const aiMlRoles = opportunities.filter((o) => o.category === 'AI_ML' || o.aiMlRelevance === 'CORE_AI_ML' || o.relevanceScore >= 60).length;
+    const aiMlInternships = opportunities.filter((o) => (o.category === 'AI_ML' || o.aiMlRelevance === 'CORE_AI_ML') && (o.type === 'INTERNSHIP' || o.experienceLevel === 'INTERN')).length;
+    const softwareRoles = opportunities.filter((o) => o.category === 'SOFTWARE' || o.category === 'FULL_STACK').length;
+    const dataRoles = opportunities.filter((o) => o.category === 'DATA').length;
+    const backendRoles = opportunities.filter((o) => o.category === 'BACKEND').length;
+    const frontendRoles = opportunities.filter((o) => o.category === 'FRONTEND').length;
+    const productRoles = opportunities.filter((o) => o.category === 'PRODUCT').length;
+    const designRoles = opportunities.filter((o) => o.category === 'DESIGN').length;
+    const marketingRoles = opportunities.filter((o) => o.category === 'MARKETING').length;
+    const salesRoles = opportunities.filter((o) => o.category === 'SALES').length;
+    const operationsRoles = opportunities.filter((o) => o.category === 'OPERATIONS').length;
+    const financeRoles = opportunities.filter((o) => o.category === 'FINANCE').length;
+    const hrRoles = opportunities.filter((o) => o.category === 'HR').length;
+    const otherRoles = opportunities.filter((o) => o.category === 'OTHER' || o.category === 'QA' || o.category === 'DEVOPS_CLOUD').length;
+
+    const savedJobsCount = this.db.saved_jobs.length;
+    const appliedJobsCount = opportunities.filter((o) => o.userApplicationStatus === 'APPLIED').length;
+    const newJobsCount = opportunities.filter((o) => o.isNew).length;
+
     const verifiedOpportunities = opportunities.filter((o) => o.verificationStatus === 'VERIFIED').length;
     
+    // Open applications
+    const openApplications = openApps.length;
+    const openApplicationsWithEmail = openApps.filter((a) => Boolean(a.contactEmail && a.contactEmail !== 'NOT PUBLICLY AVAILABLE')).length;
+
+    // Applications pipeline counts
+    const applicationsDraftCount = apps.filter((a) => a.status === 'DRAFT').length;
+    const applicationsReadyCount = apps.filter((a) => a.status === 'READY_TO_SEND').length;
+    const applicationsSentCount = apps.filter((a) => a.status === 'SENT').length;
+    const todaySentCount = this.getTodaySentCount();
+    const dailyLimit = emailConfig.dailySendLimit || 20;
+    const dailyLimitRemaining = Math.max(0, dailyLimit - todaySentCount);
+
     // Contacts breakdown - only count verified public emails in primary counter
     const verifiedPublicEmails = contacts.filter(
       (c) =>
@@ -761,6 +1522,24 @@ class Store {
       totalOpportunities: opportunities.length,
       totalJobs,
       totalInternships,
+      aiMlInternships,
+      softwareRoles,
+      dataRoles,
+      backendRoles,
+      frontendRoles,
+      productRoles,
+      designRoles,
+      marketingRoles,
+      salesRoles,
+      operationsRoles,
+      financeRoles,
+      hrRoles,
+      otherRoles,
+      savedJobsCount,
+      appliedJobsCount,
+      newJobsCount,
+      openApplications,
+      openApplicationsWithEmail,
       fresherRoles,
       aiMlRoles,
       verifiedOpportunities,
@@ -775,6 +1554,11 @@ class Store {
       removedEmails,
       rejectedEmails,
       unresolvedErrors: errors.filter((e) => !e.resolved).length,
+      applicationsDraftCount,
+      applicationsReadyCount,
+      applicationsSentCount,
+      todaySentCount,
+      dailyLimitRemaining,
     };
   }
 }

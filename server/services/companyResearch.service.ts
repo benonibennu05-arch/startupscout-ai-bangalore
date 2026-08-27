@@ -1,5 +1,5 @@
 import * as cheerio from 'cheerio';
-import { Company, Opportunity, Contact, ResearchMode } from '../types.ts';
+import { Company, Opportunity, Contact, ResearchMode, OpenApplication } from '../types.ts';
 import { store } from '../database/store.ts';
 import { crawlerService } from './crawler.service.ts';
 import { careersService } from './careers.service.ts';
@@ -7,6 +7,9 @@ import { geminiService } from '../ai/gemini.service.ts';
 import { emailService } from './email.service.ts';
 import { extractJobSnippetsFromHtml } from '../extractors/job.extractor.ts';
 import { extractCompanyFromStartupMapPage } from '../extractors/company.extractor.ts';
+import { extractOpenApplicationFromHtml } from '../extractors/openApplication.extractor.ts';
+import { REAL_OPEN_APPLICATIONS_MAP } from '../crawler/openApplicationsMap.ts';
+import { applicationEmailService } from './applicationEmail.service.ts';
 import { logger } from '../utils/logger.ts';
 import { REAL_OPPORTUNITIES_MAP } from '../crawler/companyResearcher.ts';
 
@@ -14,6 +17,7 @@ export interface ResearchResult {
   company: Company;
   opportunities: Opportunity[];
   contacts: Contact[];
+  openApplications: OpenApplication[];
   durationMs: number;
   geminiCalls: number;
 }
@@ -42,6 +46,7 @@ export class CompanyResearchService {
           company,
           opportunities: store.getOpportunitiesForCompany(company.id),
           contacts: store.getContactsForCompany(company.id),
+          openApplications: store.getOpenApplications({ companyId: company.id }),
           durationMs: Date.now() - startTime,
           geminiCalls: 0,
         };
@@ -268,6 +273,75 @@ export class CompanyResearchService {
       }
     }
 
+    // Step 3b: Open Application / Talent Pool Detection
+    const discoveredOpenApps: OpenApplication[] = [];
+    const seedOpenApp = REAL_OPEN_APPLICATIONS_MAP[company.name];
+
+    if (seedOpenApp) {
+      const openApp = store.upsertOpenApplication({
+        companyId: company.id,
+        companyName: company.name,
+        sourceUrl: seedOpenApp.sourceUrl,
+        sourceText: seedOpenApp.evidence,
+        evidence: seedOpenApp.evidence,
+        contactEmail: seedOpenApp.contactEmail,
+        contactName: seedOpenApp.contactName,
+        contactRole: seedOpenApp.contactRole,
+        verificationStatus: seedOpenApp.contactEmail ? 'VERIFIED_PUBLIC' : 'NOT_FOUND',
+        relevanceScore: seedOpenApp.relevanceScore,
+        status: 'OPEN',
+        hasVerifiedEmail: Boolean(seedOpenApp.contactEmail),
+        discoveredAt: now,
+        updatedAt: now,
+      });
+      discoveredOpenApps.push(openApp);
+
+      store.addEvent({
+        companyId: company.id,
+        companyName: company.name,
+        event: 'OPEN_APPLICATION_FOUND',
+        message: `Identified verified talent pool opportunity for ${company.name}: "${seedOpenApp.evidence.slice(0, 80)}..."`,
+        stage: 'DISCOVER_JOBS',
+        type: 'success',
+      });
+    } else if (careerHtmlContent) {
+      const extractedOpen = extractOpenApplicationFromHtml(
+        careerHtmlContent,
+        careersUrl || officialWebsite || '',
+        company.name,
+        officialWebsite
+      );
+
+      if (extractedOpen) {
+        const openApp = store.upsertOpenApplication({
+          companyId: company.id,
+          companyName: company.name,
+          sourceUrl: extractedOpen.sourceUrl,
+          sourceText: extractedOpen.sourceText,
+          evidence: extractedOpen.evidence,
+          contactEmail: extractedOpen.contactEmail,
+          contactName: extractedOpen.contactName,
+          contactRole: extractedOpen.contactRole,
+          verificationStatus: extractedOpen.verificationStatus,
+          relevanceScore: extractedOpen.relevanceScore,
+          status: 'OPEN',
+          hasVerifiedEmail: Boolean(extractedOpen.contactEmail),
+          discoveredAt: now,
+          updatedAt: now,
+        });
+        discoveredOpenApps.push(openApp);
+
+        store.addEvent({
+          companyId: company.id,
+          companyName: company.name,
+          event: 'OPEN_APPLICATION_FOUND',
+          message: `Discovered open application / talent pool invitation at ${company.name}: "${extractedOpen.evidence.slice(0, 80)}..."`,
+          stage: 'DISCOVER_JOBS',
+          type: 'success',
+        });
+      }
+    }
+
     // Step 4: Public Recruitment Emails & Contacts Extraction (Evidence-Only)
     // 4a. Extract from careers page HTML if available
     if (careersUrl && careerHtmlContent) {
@@ -293,6 +367,35 @@ export class CompanyResearchService {
           timeoutMs: Math.min(8000, settings.requestTimeoutMs),
         });
         if (siteHtml) {
+          // If no open app found from careers, try homepage/contact page
+          if (discoveredOpenApps.length === 0) {
+            const extractedOpen = extractOpenApplicationFromHtml(
+              siteHtml,
+              officialWebsite,
+              company.name,
+              officialWebsite
+            );
+            if (extractedOpen) {
+              const openApp = store.upsertOpenApplication({
+                companyId: company.id,
+                companyName: company.name,
+                sourceUrl: extractedOpen.sourceUrl,
+                sourceText: extractedOpen.sourceText,
+                evidence: extractedOpen.evidence,
+                contactEmail: extractedOpen.contactEmail,
+                contactName: extractedOpen.contactName,
+                contactRole: extractedOpen.contactRole,
+                verificationStatus: extractedOpen.verificationStatus,
+                relevanceScore: extractedOpen.relevanceScore,
+                status: 'OPEN',
+                hasVerifiedEmail: Boolean(extractedOpen.contactEmail),
+                discoveredAt: now,
+                updatedAt: now,
+              });
+              discoveredOpenApps.push(openApp);
+            }
+          }
+
           const extractedWebsite = emailService.extractAndPersistEmails(
             siteHtml,
             officialWebsite,
@@ -328,6 +431,13 @@ export class CompanyResearchService {
       });
     }
 
+    // Step 4c: Auto-draft application emails for human review if verified contact exists
+    try {
+      await applicationEmailService.autoDraftApplications();
+    } catch (err: any) {
+      logger.debug(`Auto draft generation error for ${company.name}: ${err?.message}`);
+    }
+
     // Step 5: Persist Company Record Immediately
     const updatedCompany = store.upsertCompany({
       id: company.id,
@@ -356,7 +466,7 @@ export class CompanyResearchService {
       companyId: company.id,
       companyName: company.name,
       event: 'COMPANY_COMPLETED',
-      message: `Research completed for ${company.name} in ${(durationMs / 1000).toFixed(1)}s: ${discoveredOpportunities.length} jobs, ${discoveredContacts.length} contacts saved.`,
+      message: `Research completed for ${company.name} in ${(durationMs / 1000).toFixed(1)}s: ${discoveredOpportunities.length} jobs, ${discoveredOpenApps.length} open apps, ${discoveredContacts.length} contacts saved.`,
       stage: 'COMPLETE',
       type: 'success',
     });
@@ -365,6 +475,7 @@ export class CompanyResearchService {
       company: updatedCompany,
       opportunities: discoveredOpportunities,
       contacts: discoveredContacts,
+      openApplications: discoveredOpenApps,
       durationMs,
       geminiCalls,
     };

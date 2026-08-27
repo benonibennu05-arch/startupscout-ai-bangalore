@@ -4,6 +4,8 @@ import { Sidebar, NavTab } from './components/Sidebar';
 import { DashboardPage } from './pages/DashboardPage';
 import { CompaniesPage } from './pages/CompaniesPage';
 import { OpportunitiesPage } from './pages/OpportunitiesPage';
+import { OpenApplicationsPage } from './pages/OpenApplicationsPage';
+import { ApplicationsPipelinePage } from './pages/ApplicationsPipelinePage';
 import { ContactsPage } from './pages/ContactsPage';
 import { ResearchRunsPage } from './pages/ResearchRunsPage';
 import { FailedResearchPage } from './pages/FailedResearchPage';
@@ -211,6 +213,17 @@ export function App() {
 
           {activeTab === 'opportunities' && (
             <OpportunitiesPage onSelectOpportunity={setSelectedOpportunity} />
+          )}
+
+          {activeTab === 'open_applications' && (
+            <OpenApplicationsPage
+              onSelectCompany={setSelectedCompanyId}
+              onNavigateToPipeline={() => setActiveTab('applications')}
+            />
+          )}
+
+          {activeTab === 'applications' && (
+            <ApplicationsPipelinePage />
           )}
 
           {activeTab === 'internships' && (

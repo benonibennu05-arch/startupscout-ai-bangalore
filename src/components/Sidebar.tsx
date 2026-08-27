@@ -7,6 +7,8 @@ import {
   Sparkles,
   UserCheck,
   Mail,
+  Inbox,
+  SendHorizontal,
   History,
   AlertOctagon,
   Settings,
@@ -17,6 +19,8 @@ export type NavTab =
   | 'dashboard'
   | 'companies'
   | 'opportunities'
+  | 'open_applications'
+  | 'applications'
   | 'internships'
   | 'aiml'
   | 'fresher'
@@ -36,7 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onTabChange,
   queueStatus,
 }) => {
-  const stats = queueStatus?.stats;
+  const stats = queueStatus?.stats as any;
 
   const navItems: {
     id: NavTab;
@@ -63,6 +67,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Briefcase,
       badge: stats?.totalOpportunities,
       badgeColor: 'bg-blue-100 text-blue-800',
+    },
+    {
+      id: 'open_applications',
+      label: 'Open Applications',
+      icon: Inbox,
+      badge: stats?.openApplications,
+      badgeColor: 'bg-indigo-100 text-indigo-800',
+    },
+    {
+      id: 'applications',
+      label: 'Application Pipeline',
+      icon: SendHorizontal,
+      badge: stats?.applicationsReadyCount,
+      badgeColor: 'bg-emerald-100 text-emerald-800',
     },
     {
       id: 'internships',

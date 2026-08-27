@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { apiRouter } from './server/routes/api.ts';
 import { startupMapService } from './server/services/startupMap.service.ts';
 import { store } from './server/database/store.ts';
+import { monitoringService } from './server/services/monitoring.service.ts';
 
 dotenv.config();
 
@@ -44,6 +45,9 @@ async function startServer() {
         });
       }, 500);
     }
+
+    // Start continuous background monitoring scheduler
+    monitoringService.startBackgroundScheduler(30);
   });
 }
 
@@ -51,3 +55,4 @@ startServer().catch((err) => {
   console.error('Failed to start server:', err);
   process.exit(1);
 });
+

@@ -14,6 +14,10 @@ import {
   Briefcase,
   DollarSign,
   Layers,
+  Bookmark,
+  BookmarkCheck,
+  SendHorizontal,
+  UserCheck,
 } from 'lucide-react';
 import { Opportunity } from '../types';
 import { api } from '../services/api';
@@ -22,16 +26,18 @@ interface OpportunityDetailModalProps {
   opportunity: Opportunity | null;
   onClose: () => void;
   onRefresh?: () => void;
+  onOpenDraft?: (opp: Opportunity) => void;
 }
 
 export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
   opportunity,
   onClose,
   onRefresh,
+  onOpenDraft,
 }) => {
   const [copiedApp, setCopiedApp] = useState(false);
-  const [copiedEmail, setCopiedEmail] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [drafting, setDrafting] = useState(false);
   const [currentOpp, setCurrentOpp] = useState<Opportunity | null>(opportunity);
 
   if (!currentOpp && !opportunity) return null;
@@ -42,6 +48,31 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
       navigator.clipboard.writeText(opp.applicationUrl);
       setCopiedApp(true);
       setTimeout(() => setCopiedApp(false), 2000);
+    }
+  };
+
+  const handleToggleSave = async () => {
+    try {
+      if (opp.isSaved) {
+        await api.unsaveJob(opp.id);
+        setCurrentOpp({ ...opp, isSaved: false, userApplicationStatus: undefined });
+      } else {
+        await api.saveJob(opp.id, 'HIGH', 'Saved from modal');
+        setCurrentOpp({ ...opp, isSaved: true, userApplicationStatus: 'SAVED' });
+      }
+      onRefresh?.();
+    } catch (err) {
+      console.error('Failed to toggle save:', err);
+    }
+  };
+
+  const handleStatusSelect = async (status: string) => {
+    try {
+      await api.updateJobApplicationStatus(opp.id, status);
+      setCurrentOpp({ ...opp, userApplicationStatus: status as any, isSaved: status === 'SAVED' || opp.isSaved });
+      onRefresh?.();
+    } catch (err) {
+      console.error('Failed to update status:', err);
     }
   };
 
@@ -57,6 +88,25 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
       console.error(e);
     } finally {
       setVerifying(false);
+    }
+  };
+
+  const handleDraftOutreach = async () => {
+    setDrafting(true);
+    try {
+      await api.generateApplication({
+        companyId: opp.companyId,
+        opportunityId: opp.id,
+      });
+      onRefresh?.();
+      if (onOpenDraft) {
+        onOpenDraft(opp);
+      }
+      onClose();
+    } catch (err) {
+      console.error('Draft error:', err);
+    } finally {
+      setDrafting(false);
     }
   };
 
@@ -78,19 +128,35 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
             </div>
             <h2 className="text-lg font-bold text-gray-900 mt-0.5">{opp.title}</h2>
           </div>
-          <button
-            id="btn-close-opp-modal"
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleToggleSave}
+              className={`p-1.5 rounded-lg border transition ${
+                opp.isSaved
+                  ? 'bg-amber-50 text-amber-600 border-amber-300'
+                  : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+              }`}
+              title={opp.isSaved ? 'Saved to bookmarks' : 'Save opportunity'}
+            >
+              {opp.isSaved ? <BookmarkCheck className="w-4 h-4 fill-amber-500" /> : <Bookmark className="w-4 h-4" />}
+            </button>
+            <button
+              id="btn-close-opp-modal"
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Body */}
         <div className="p-6 overflow-y-auto space-y-5">
           {/* Badges Bar */}
           <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-gray-100">
+            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800">
+              {opp.category || 'SOFTWARE'}
+            </span>
             <span
               className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
                 opp.type === 'INTERNSHIP'
@@ -119,30 +185,49 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
               }`}
             >
               <ShieldCheck className="w-3.5 h-3.5" />
-              {opp.verificationStatus} ({opp.confidence} Confidence)
+              {opp.verificationStatus}
             </span>
           </div>
 
-          {/* AI Relevance Card */}
-          <div className="bg-blue-50/60 rounded-xl p-4 border border-blue-100">
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-blue-900">
-                <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                <span>AI Relevance Score</span>
+          {/* Status & Profile Match Bar */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="bg-blue-50/60 rounded-xl p-3.5 border border-blue-100">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-bold text-blue-900 flex items-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                  Personal Match Score
+                </span>
+                <span className="text-sm font-extrabold text-blue-700">
+                  {opp.personalMatchScore || opp.relevanceScore}%
+                </span>
               </div>
-              <span className="text-sm font-extrabold text-blue-700">
-                {opp.relevanceScore} / 100
-              </span>
+              <div className="w-full bg-blue-200 rounded-full h-1.5 overflow-hidden">
+                <div
+                  className="bg-blue-600 h-1.5 rounded-full"
+                  style={{ width: `${opp.personalMatchScore || opp.relevanceScore}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-blue-800 pt-1.5 font-medium">
+                Calibrated to your candidate profile (Full-Stack, AI/ML, Python, Next.js).
+              </p>
             </div>
-            <div className="w-full bg-blue-200 rounded-full h-2 overflow-hidden mb-2">
-              <div
-                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${opp.relevanceScore}%` }}
-              />
+
+            <div className="bg-gray-50 rounded-xl p-3.5 border border-gray-200 flex flex-col justify-between">
+              <div className="text-xs font-bold text-gray-700">Application Pipeline Status</div>
+              <select
+                value={opp.userApplicationStatus || 'NEW'}
+                onChange={(e) => handleStatusSelect(e.target.value)}
+                className="mt-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-800"
+              >
+                <option value="NEW">New Discovered Role</option>
+                <option value="SAVED">Saved / Bookmarked</option>
+                <option value="APPLIED">Applied on Career Site</option>
+                <option value="INTERVIEWING">Interviewing</option>
+                <option value="OFFER">Offer Received</option>
+                <option value="REJECTED">Rejected</option>
+                <option value="NOT_INTERESTED">Not Interested</option>
+              </select>
             </div>
-            <p className="text-[11px] text-blue-800 font-medium">
-              Scored with Gemini AI against tech stack, early-career/intern match, and relevance to modern engineering.
-            </p>
           </div>
 
           {/* Description */}
@@ -232,15 +317,26 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
         </div>
 
         {/* Footer Actions */}
-        <div className="px-6 py-3.5 border-t border-gray-200 bg-gray-50 flex items-center justify-between gap-2 shrink-0">
-          <button
-            onClick={handleVerify}
-            disabled={verifying}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 transition-colors"
-          >
-            <RotateCw className={`w-3.5 h-3.5 text-emerald-600 ${verifying ? 'animate-spin' : ''}`} />
-            {verifying ? 'Verifying...' : 'Re-verify Link'}
-          </button>
+        <div className="px-6 py-3.5 border-t border-gray-200 bg-gray-50 flex items-center justify-between gap-2 shrink-0 flex-wrap">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleVerify}
+              disabled={verifying}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 transition-colors"
+            >
+              <RotateCw className={`w-3.5 h-3.5 text-emerald-600 ${verifying ? 'animate-spin' : ''}`} />
+              {verifying ? 'Verifying...' : 'Re-verify Link'}
+            </button>
+
+            <button
+              onClick={handleDraftOutreach}
+              disabled={drafting}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 transition-colors"
+            >
+              <SendHorizontal className="w-3.5 h-3.5" />
+              <span>{drafting ? 'Generating...' : 'Draft Outreach Email'}</span>
+            </button>
+          </div>
 
           <div className="flex items-center gap-2">
             {opp.applicationUrl && (
@@ -278,3 +374,4 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
     </div>
   );
 };
+
