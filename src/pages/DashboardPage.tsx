@@ -64,36 +64,36 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       />
 
       {/* Action Pipeline Quick Banner */}
-      <div className="bg-gradient-to-r from-blue-900 to-indigo-900 text-white rounded-xl p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-gradient-to-r from-emerald-950 via-teal-900 to-indigo-950 text-white rounded-xl p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-500/30 text-blue-200 border border-blue-400/30">
-              Active Pipeline
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/30 text-emerald-200 border border-emerald-400/30">
+              Automated Outreach Pipeline
             </span>
             <span className="text-sm font-semibold">
-              {stats?.applicationsReadyCount || 0} Applications Awaiting Human Approval
+              End-to-End Cold Email Engine (Zero Guessed Emails)
             </span>
           </div>
-          <p className="text-xs text-blue-200/90 max-w-xl">
-            {stats?.openApplications || 0} open talent pool invitations discovered. Review drafted outreach emails, inspect official career evidence, and dispatch approved applications.
+          <p className="text-xs text-emerald-200/90 max-w-xl">
+            Processes all 957+ Bangalore startups. Generates job applications for open roles or personalized AI/ML career inquiries for companies without vacancies.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
           <button
             onClick={() => onNavigate('open_applications')}
-            className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-xs font-semibold transition border border-white/20 flex items-center gap-1.5"
+            className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-xs font-semibold transition border border-white/20 flex items-center gap-1.5 cursor-pointer"
           >
             <Inbox className="w-3.5 h-3.5" />
-            <span>Open Apps ({stats?.openApplications || 0})</span>
+            <span>Open Pools ({stats?.openApplications || 0})</span>
           </button>
 
           <button
-            onClick={() => onNavigate('applications')}
-            className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-semibold transition shadow-xs flex items-center gap-1.5"
+            onClick={() => onNavigate('outreach')}
+            className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold transition shadow-xs flex items-center gap-1.5 cursor-pointer"
           >
             <SendHorizontal className="w-3.5 h-3.5" />
-            <span>Review & Send</span>
+            <span>My Outreach Pipeline</span>
           </button>
         </div>
       </div>

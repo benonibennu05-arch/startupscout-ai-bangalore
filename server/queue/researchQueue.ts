@@ -304,6 +304,114 @@ class ResearchQueueManager {
     return this.getStatus();
   }
 
+  // --- Start Incremental Research: Only uncompleted, stale, or changed companies ---
+  public async startIncrementalResearch(mode: ResearchMode = 'FAST', concurrency: number = 10) {
+    if (this.status === 'RUNNING') {
+      throw new Error('Research is already running. Please pause or stop first.');
+    }
+
+    this.mode = mode;
+    this.concurrency = Math.max(2, Math.min(25, concurrency));
+    this.status = 'RUNNING';
+    this.runStartTime = Date.now();
+    this.completedInRun = 0;
+    this.totalDurationsMs = 0;
+    this.geminiCallsCount = 0;
+    this.timeoutsCount = 0;
+    this.rateLimitedCount = 0;
+    this.abortController = new AbortController();
+
+    const allCompanies = store.getCompanies();
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+    // Filter to companies that need research: not completed, failed, or researched > 7 days ago
+    const toQueue = allCompanies.filter((c) => {
+      if (c.status !== 'COMPLETED') return true;
+      if (!c.lastResearchedAt) return true;
+      const last = new Date(c.lastResearchedAt).getTime();
+      return isNaN(last) || last < sevenDaysAgo;
+    });
+
+    const finalQueue = toQueue.length > 0 ? toQueue : allCompanies.slice(0, 20);
+    this.queue = finalQueue.map((c) => c.id);
+
+    this.currentRun = store.createResearchRun('CUSTOM_SELECTION', finalQueue.length);
+    this.currentRun.mode = this.mode;
+    this.currentRun.concurrency = this.concurrency;
+
+    store.addEvent({
+      companyId: 'queue',
+      companyName: 'Research Queue',
+      event: 'INCREMENTAL_RESEARCH_STARTED',
+      message: `Started Incremental Research for ${finalQueue.length} startups requiring updates (${this.concurrency} workers, ${this.mode} mode).`,
+      stage: 'RESEARCH_COMPANY',
+      type: 'info',
+    });
+
+    this.currentStage = 'RESEARCH_COMPANY';
+    this.broadcast('STAGE_CHANGE', { stage: 'RESEARCH_COMPANY' });
+    this.startWorkerPool();
+
+    return this.getStatus();
+  }
+
+  // --- Start Research for New Companies Only ---
+  public async startNewCompaniesResearch(mode: ResearchMode = 'FAST', concurrency: number = 10) {
+    if (this.status === 'RUNNING') {
+      throw new Error('Research is already running. Please pause or stop first.');
+    }
+
+    this.mode = mode;
+    this.concurrency = Math.max(2, Math.min(25, concurrency));
+    this.status = 'RUNNING';
+    this.runStartTime = Date.now();
+    this.completedInRun = 0;
+    this.totalDurationsMs = 0;
+    this.geminiCallsCount = 0;
+    this.timeoutsCount = 0;
+    this.rateLimitedCount = 0;
+    this.abortController = new AbortController();
+
+    this.currentStage = 'DISCOVER_COMPANIES';
+    this.broadcast('STAGE_CHANGE', { stage: 'DISCOVER_COMPANIES' });
+
+    // Step 1: Discover from Map
+    const discovered = await crawlBangaloreStartupMap();
+    for (const item of discovered) {
+      store.upsertCompany(item);
+    }
+
+    const allCompanies = store.getCompanies();
+    const newOnly = allCompanies.filter((c) => !c.lastResearchedAt || c.status === 'PENDING' || c.status === 'DISCOVERING');
+
+    const finalQueue = newOnly.length > 0 ? newOnly : allCompanies.slice(0, 10);
+    this.queue = finalQueue.map((c) => c.id);
+
+    this.currentRun = store.createResearchRun('CUSTOM_SELECTION', finalQueue.length);
+    this.currentRun.mode = this.mode;
+    this.currentRun.concurrency = this.concurrency;
+
+    store.addEvent({
+      companyId: 'queue',
+      companyName: 'Research Queue',
+      event: 'NEW_COMPANIES_RESEARCH_STARTED',
+      message: `Started Research for ${finalQueue.length} newly discovered startups (${this.concurrency} workers, ${this.mode} mode).`,
+      stage: 'RESEARCH_COMPANY',
+      type: 'info',
+    });
+
+    this.currentStage = 'RESEARCH_COMPANY';
+    this.broadcast('STAGE_CHANGE', { stage: 'RESEARCH_COMPANY' });
+    this.startWorkerPool();
+
+    return this.getStatus();
+  }
+
+  // --- Start Failed-Only Research ---
+  public startFailedOnlyResearch(concurrency = 10) {
+    return this.retryFailed(concurrency);
+  }
+
   // --- Research Single Company on Demand ---
   public async researchSingle(companyId: string) {
     const comp = store.getCompany(companyId);

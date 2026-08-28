@@ -1,26 +1,7 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { Type } from '@google/genai';
 import { OpportunityType, ExperienceLevel, EmailType } from '../types.ts';
 import { classifyEmailType, verifyExactMatchInSource } from '../extractors/email.extractor.ts';
-
-let aiClient: GoogleGenAI | null = null;
-
-function getAiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
-    return null;
-  }
-  if (!aiClient) {
-    aiClient = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
-  }
-  return aiClient;
-}
+import { geminiClient } from './geminiClient.ts';
 
 export interface ClassifiedJob {
   title: string;
@@ -159,8 +140,7 @@ export async function classifyJobWithGemini(
   targetRoles: string[],
   targetSkills: string[]
 ): Promise<ClassifiedJob> {
-  const ai = getAiClient();
-  if (!ai) {
+  if (!geminiClient.isAvailable()) {
     return heuristicClassifyJob(title, rawDescription, targetRoles, targetSkills);
   }
 
@@ -188,9 +168,12 @@ Extract the following in strict JSON format:
 
 Strictly adhere to facts in the text. Do not invent details.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.7-flash',
-      contents: prompt,
+    if (!geminiClient.isAvailable()) {
+      return heuristicClassifyJob(title, rawDescription, targetRoles, targetSkills);
+    }
+
+    const text = await geminiClient.safeGenerateContent({
+      prompt,
       config: {
         responseMimeType: 'application/json',
         responseSchema: {
@@ -210,7 +193,11 @@ Strictly adhere to facts in the text. Do not invent details.`;
       },
     });
 
-    const parsed = JSON.parse(response.text || '{}');
+    if (!text) {
+      return heuristicClassifyJob(title, rawDescription, targetRoles, targetSkills);
+    }
+
+    const parsed = JSON.parse(text || '{}');
     return {
       title,
       type: (parsed.type as OpportunityType) || 'FULL_TIME',
@@ -223,7 +210,6 @@ Strictly adhere to facts in the text. Do not invent details.`;
       relevanceScore: typeof parsed.relevanceScore === 'number' ? Math.min(100, Math.max(0, parsed.relevanceScore)) : 50,
     };
   } catch (err) {
-    console.warn('Gemini classification fallback to heuristic:', err);
     return heuristicClassifyJob(title, rawDescription, targetRoles, targetSkills);
   }
 }
@@ -257,8 +243,7 @@ export async function classifyContactWithGemini(
   rawSnippet: string,
   companyName: string
 ): Promise<ClassifiedEmail> {
-  const ai = getAiClient();
-  if (!ai) {
+  if (!geminiClient.isAvailable()) {
     return {
       email: null,
       emailType: 'GENERAL_CONTACT',
@@ -288,9 +273,8 @@ Return a strict JSON object with:
 - role: string | null (job title/role if mentioned)
 - supportedByEvidence: boolean`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.7-flash',
-      contents: prompt,
+    const text = await geminiClient.safeGenerateContent({
+      prompt,
       config: {
         responseMimeType: 'application/json',
         responseSchema: {
@@ -307,7 +291,17 @@ Return a strict JSON object with:
       },
     });
 
-    const parsed = JSON.parse(response.text || '{}');
+    if (!text) {
+      return {
+        email: null,
+        emailType: 'GENERAL_CONTACT',
+        isRecruitingRelated: false,
+        confidence: 40,
+        supportedByEvidence: false,
+      };
+    }
+
+    const parsed = JSON.parse(text || '{}');
     let email = parsed.email || null;
 
     // Hard backend verification: if AI returned an email, verify it actually exists in the snippet
@@ -333,7 +327,6 @@ Return a strict JSON object with:
       supportedByEvidence: Boolean(email),
     };
   } catch (err) {
-    console.warn('Gemini contact extraction error:', err);
     return {
       email: null,
       emailType: 'GENERAL_CONTACT',

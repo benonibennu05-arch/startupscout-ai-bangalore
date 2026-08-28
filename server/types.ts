@@ -8,29 +8,150 @@ export type OpportunityType =
   | 'GRADUATE'
   | 'OTHER';
 
+export type OutreachType =
+  | 'JOB_APPLICATION'
+  | 'INTERNSHIP_APPLICATION'
+  | 'OPEN_APPLICATION'
+  | 'AI_ML_CAREER_INQUIRY'
+  | 'GENERAL_CAREER_INQUIRY';
+
+export type OutreachStatus =
+  | 'DISCOVERED'
+  | 'EMAIL_VERIFIED'
+  | 'DRAFT_READY'
+  | 'REVIEW_REQUIRED'
+  | 'APPROVED'
+  | 'SCHEDULED'
+  | 'SENT'
+  | 'FAILED'
+  | 'REPLIED'
+  | 'FOLLOW_UP'
+  | 'SKIPPED'
+  | 'COOLDOWN';
+
+export type CompanyOutreachState =
+  | 'HIRING_NOW'
+  | 'OPEN_APPLICATION'
+  | 'NO_CURRENT_ROLE_PUBLIC_EMAIL'
+  | 'NO_PUBLIC_EMAIL'
+  | 'CONTACTED'
+  | 'COOLDOWN'
+  | 'DO_NOT_CONTACT'
+  | 'FAILED';
+
+export type AutomationMode = 'MANUAL' | 'REVIEW_BEFORE_SEND' | 'AUTO_SEND';
+
+export interface OutreachSettings {
+  automationMode: AutomationMode;
+  dailySendLimit: number; // 5, 10, 20, 30, 50 (default 20)
+  cooldownDays: number; // 7, 14, 30, 60 (default 30)
+  minMatchScore: number; // default 60
+  sendDelaySeconds: number; // default 45 (range 30-90)
+  autoSendOnlyVerified: boolean;
+  gmailConnected: boolean;
+  gmailAccountEmail: string | null;
+  gmailAccessToken?: string | null;
+  doNotContactCompanyIds: string[];
+}
+
+export interface OutreachRecord {
+  id: string;
+  companyId: string;
+  companyName: string;
+  opportunityId?: string | null;
+  openApplicationId?: string | null;
+  outreachType: OutreachType;
+  roleTitle?: string;
+  recipientEmail: string;
+  recipientName?: string | null;
+  recipientRole?: string | null;
+  emailType?: EmailType;
+  emailSourceUrl: string;
+  emailSourceText?: string;
+  emailVerificationStatus: EmailVerificationStatus;
+  exactMatch?: boolean;
+  subject: string;
+  body: string;
+  resumeFile: string;
+  resumeFileId?: string | null;
+  portfolioUrl: string;
+  linkedinUrl: string;
+  githubUrl: string;
+  status: OutreachStatus;
+  matchScore: number;
+  matchReason?: string;
+  sourceUrl: string;
+  sourceEvidence?: string;
+  createdAt: string;
+  approvedAt?: string | null;
+  scheduledAt?: string | null;
+  sentAt?: string | null;
+  lastContactAt?: string | null;
+  nextEligibleAt?: string | null;
+  lastError?: string | null;
+  providerMessageId?: string | null;
+  replyDetectedAt?: string | null;
+  threadId?: string | null;
+  notes?: string | null;
+  updatedAt: string;
+}
+
+export interface OutreachStats {
+  companiesResearched: number;
+  publicEmailsFound: number;
+  verifiedEmails: number;
+  openApplicationOpportunities: number;
+  aiMlOpportunities: number;
+  draftsReady: number;
+  scheduled: number;
+  sentToday: number;
+  totalSent: number;
+  failed: number;
+  replies: number;
+  followUpPending: number;
+  inCooldown: number;
+  dailyLimitRemaining: number;
+  dailyLimit: number;
+}
+
 export type OpportunityCategory =
   | 'AI / ML'
+  | 'AI_ML'
   | 'Software Engineering'
+  | 'SOFTWARE'
   | 'Backend'
+  | 'BACKEND'
   | 'Frontend'
+  | 'FRONTEND'
   | 'Full Stack'
+  | 'FULL_STACK'
   | 'Mobile'
+  | 'MOBILE'
   | 'Data Science'
+  | 'DATA'
   | 'Data Analytics'
   | 'Data Engineering'
   | 'DevOps'
+  | 'DEVOPS_CLOUD'
   | 'Cloud'
   | 'Cybersecurity'
   | 'QA / Testing'
+  | 'QA'
   | 'Product'
+  | 'PRODUCT'
   | 'Product Management'
   | 'Design'
+  | 'DESIGN'
   | 'UI/UX'
   | 'Marketing'
+  | 'MARKETING'
   | 'Sales'
+  | 'SALES'
   | 'Business Development'
   | 'Operations'
+  | 'OPERATIONS'
   | 'Finance'
+  | 'FINANCE'
   | 'HR'
   | 'Recruiting'
   | 'Customer Success'
@@ -38,9 +159,10 @@ export type OpportunityCategory =
   | 'Research'
   | 'Legal'
   | 'Other'
+  | 'OTHER'
   | 'UNKNOWN';
 
-export type AiMlRelevance = 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
+export type AiMlRelevance = 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE' | 'CORE_AI_ML' | 'AI_APPLIED' | 'AI_ADJACENT' | 'NOT_AI';
 
 export type ExperienceLevel =
   | 'INTERN'
@@ -96,8 +218,27 @@ export interface EmailProviderConfig {
   gmailAccessToken?: string;
 }
 
+export interface ResumeFile {
+  fileId: string;
+  filename: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  storagePath: string;
+  uploadedAt: string;
+  version: number;
+  isCurrent: boolean;
+  extractedText?: string;
+  extractedSkills?: string[];
+  extractedProjects?: string[];
+  extractedExperience?: string;
+}
+
 export interface CandidateProfile {
+  id?: string;
   name: string;
+  email?: string;
+  phone?: string;
   portfolio: string;
   linkedin: string;
   github: string;
@@ -105,9 +246,18 @@ export interface CandidateProfile {
   skills: string[];
   education: string;
   bio: string;
+  resumeFileId: string | null;
   resumeFileName: string | null;
+  resumeMimeType?: string | null;
+  resumeSize?: number | null;
+  resumeStoragePath?: string | null;
   resumeUploadedAt: string | null;
+  resumeUpdatedAt?: string | null;
   resumeContentText?: string | null;
+  resumeSkills?: string[];
+  resumeProjects?: string[];
+  resumeExperience?: string;
+  resumeHistory?: ResumeFile[];
 }
 
 export interface OpenApplication {
@@ -142,6 +292,7 @@ export interface Application {
   subject: string;
   body: string;
   resumeFile: string;
+  resumeFileId?: string | null;
   sourceUrl: string;
   sourceEvidence?: string | null;
   status: ApplicationStatus;
@@ -184,10 +335,10 @@ export interface MonitoringSource {
   companyName: string;
   sourceUrl: string;
   sourceType: string;
-  contentHash: string;
+  contentHash?: string;
   lastCheckedAt: string;
-  lastChangedAt: string;
-  consecutiveUnchangedCount: number;
+  lastChangedAt?: string;
+  consecutiveUnchangedCount?: number;
   status: 'ACTIVE' | 'ERROR';
 }
 
@@ -195,21 +346,28 @@ export interface MonitoringRun {
   id: string;
   startedAt: string;
   completedAt: string | null;
+  status?: string;
   sourcesChecked: number;
-  sourcesChanged: number;
-  newJobsFound: number;
-  newInternshipsFound: number;
-  newContactsFound: number;
-  errors: number;
-  log: string[];
+  sourcesChanged?: number;
+  newOpportunitiesFound?: number;
+  newJobsFound?: number;
+  newInternshipsFound?: number;
+  newContactsFound?: number;
+  contactsUpdated?: number;
+  errors?: number;
+  log?: string[];
+  summary?: string;
 }
 
 export interface AppNotification {
   id: string;
   title: string;
   message: string;
-  type: 'NEW_JOB' | 'NEW_INTERNSHIP' | 'NEW_CONTACT' | 'NEW_DRAFT' | 'INFO';
+  type: 'NEW_JOB' | 'NEW_INTERNSHIP' | 'NEW_CONTACT' | 'NEW_DRAFT' | 'INFO' | 'NEW_JOB_DISCOVERED' | 'CONTACT_VERIFIED';
   link?: string;
+  relatedCompanyId?: string;
+  relatedOpportunityId?: string;
+  priority?: 'HIGH' | 'MEDIUM' | 'LOW';
   createdAt: string;
   read: boolean;
 }
@@ -330,7 +488,7 @@ export interface Opportunity {
   companyId: string;
   companyName: string;
   title: string;
-  category: OpportunityCategory;
+  category?: OpportunityCategory;
   type: OpportunityType;
   employmentType: string;
   experienceLevel: ExperienceLevel;
@@ -346,15 +504,16 @@ export interface Opportunity {
   sourceType: SourceType;
   verificationStatus: VerificationStatus;
   confidence: ConfidenceLevel;
-  aiMlRelevance: AiMlRelevance;
+  aiMlRelevance?: AiMlRelevance;
   relevanceScore: number; // 0 - 100
-  personalMatchScore: number; // 0 - 100 candidate specific alignment
-  jobFingerprint: string;
-  isNew: boolean;
+  personalMatchScore?: number; // 0 - 100 candidate specific alignment
+  jobFingerprint?: string;
+  isNew?: boolean;
   status: OpportunityStatus;
-  firstSeenAt: string;
-  lastSeenAt: string;
-  lastVerifiedAt: string;
+  discoveredAt?: string;
+  firstSeenAt?: string;
+  lastSeenAt?: string;
+  lastVerifiedAt?: string;
   isSaved?: boolean;
   userApplicationStatus?: 'NEW' | 'SAVED' | 'READY_TO_APPLY' | 'APPLIED' | 'INTERVIEW' | 'OFFER' | 'REJECTED';
   userNotes?: string;

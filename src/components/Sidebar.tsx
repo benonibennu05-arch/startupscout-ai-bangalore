@@ -12,14 +12,17 @@ import {
   History,
   AlertOctagon,
   Settings,
+  User,
 } from 'lucide-react';
 import { QueueStatusResponse } from '../services/api';
 
 export type NavTab =
   | 'dashboard'
+  | 'profile'
   | 'companies'
   | 'opportunities'
   | 'open_applications'
+  | 'outreach'
   | 'applications'
   | 'internships'
   | 'aiml'
@@ -55,6 +58,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: LayoutDashboard,
     },
     {
+      id: 'profile',
+      label: 'My Profile',
+      icon: User,
+    },
+    {
+      id: 'outreach',
+      label: 'My Outreach Pipeline',
+      icon: SendHorizontal,
+      badge: stats?.applicationsReadyCount,
+      badgeColor: 'bg-emerald-100 text-emerald-800 font-bold',
+    },
+    {
       id: 'companies',
       label: 'Companies',
       icon: Building2,
@@ -77,10 +92,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'applications',
-      label: 'Application Pipeline',
-      icon: SendHorizontal,
-      badge: stats?.applicationsReadyCount,
-      badgeColor: 'bg-emerald-100 text-emerald-800',
+      label: 'Sent Applications',
+      icon: Mail,
+      badge: stats?.totalSentApplications,
+      badgeColor: 'bg-teal-100 text-teal-800',
     },
     {
       id: 'internships',

@@ -10,6 +10,7 @@ import { extractCompanyFromStartupMapPage } from '../extractors/company.extracto
 import { extractOpenApplicationFromHtml } from '../extractors/openApplication.extractor.ts';
 import { REAL_OPEN_APPLICATIONS_MAP } from '../crawler/openApplicationsMap.ts';
 import { applicationEmailService } from './applicationEmail.service.ts';
+import { outreachService } from './outreach.service.ts';
 import { logger } from '../utils/logger.ts';
 import { REAL_OPPORTUNITIES_MAP } from '../crawler/companyResearcher.ts';
 
@@ -431,11 +432,12 @@ export class CompanyResearchService {
       });
     }
 
-    // Step 4c: Auto-draft application emails for human review if verified contact exists
+    // Step 4c: Auto-draft application & outreach emails for human review if verified contact exists
     try {
+      await outreachService.evaluateAndCreateDraftForCompany(company);
       await applicationEmailService.autoDraftApplications();
     } catch (err: any) {
-      logger.debug(`Auto draft generation error for ${company.name}: ${err?.message}`);
+      logger.debug(`Auto outreach/draft generation error for ${company.name}: ${err?.message}`);
     }
 
     // Step 5: Persist Company Record Immediately

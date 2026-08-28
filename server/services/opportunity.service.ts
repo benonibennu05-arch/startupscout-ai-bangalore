@@ -25,7 +25,7 @@ export class OpportunityService {
     return store.unsaveJob(opportunityId);
   }
 
-  public updateJobStatus(opportunityId: string, status: 'SAVED' | 'APPLIED' | 'INTERVIEWING' | 'OFFER' | 'REJECTED' | 'NOT_INTERESTED') {
+  public updateJobStatus(opportunityId: string, status: 'SAVED' | 'READY_TO_APPLY' | 'APPLIED' | 'INTERVIEW' | 'OFFER' | 'REJECTED') {
     const opp = store.getOpportunity(opportunityId);
     if (opp) {
       opp.userApplicationStatus = status;
@@ -70,10 +70,10 @@ export class OpportunityService {
       location: data.location || 'Bangalore, India',
       remote: data.remote || classified.remote,
       description: data.description || `Open position for ${data.title} at ${data.companyName}`,
-      responsibilities: data.responsibilities || classified.responsibilities,
-      requirements: data.requirements || classified.requirements,
+      responsibilities: data.responsibilities || [],
+      requirements: data.requirements || [],
       skills: data.skills && data.skills.length > 0 ? data.skills : classified.skills,
-      salary: data.salary || classified.salary,
+      salary: data.salary || null,
       applicationUrl: data.applicationUrl || data.sourceUrl || '',
       sourceUrl: data.sourceUrl || '',
       sourceType: data.sourceType || 'OFFICIAL_CAREERS',

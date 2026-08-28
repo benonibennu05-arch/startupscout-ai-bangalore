@@ -19,9 +19,20 @@ import {
   AppNotification,
   SavedJobRecord,
   OpportunityFilter,
+  OutreachRecord,
+  OutreachSettings,
+  OutreachStatus,
+  OutreachType,
+  OutreachStats,
+  CompanyOutreachState,
 } from '../types.ts';
 import { REAL_OPEN_APPLICATIONS_MAP } from '../crawler/openApplicationsMap.ts';
 import { classifyRole, generateJobFingerprint } from '../ai/roleClassifier.ts';
+import {
+  APPROVED_GENERAL_INQUIRY_SUBJECT,
+  getApprovedGeneralInquiryBody,
+  APPROVED_CANDIDATE_INFO,
+} from '../templates/approvedEmailTemplate.ts';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'database.json');
@@ -32,6 +43,8 @@ export interface DatabaseSchema {
   contacts: Contact[];
   open_applications: OpenApplication[];
   applications: Application[];
+  outreach_records: OutreachRecord[];
+  outreach_settings: OutreachSettings;
   sent_emails: SentEmailRecord[];
   saved_jobs: SavedJobRecord[];
   monitoring_sources: MonitoringSource[];
@@ -45,56 +58,64 @@ export interface DatabaseSchema {
   user_settings: UserSettings;
 }
 
+export const DEFAULT_OUTREACH_SETTINGS: OutreachSettings = {
+  automationMode: 'REVIEW_BEFORE_SEND',
+  dailySendLimit: 20,
+  cooldownDays: 30,
+  minMatchScore: 60,
+  sendDelaySeconds: 45,
+  autoSendOnlyVerified: true,
+  gmailConnected: false,
+  gmailAccountEmail: null,
+  gmailAccessToken: null,
+  doNotContactCompanyIds: [],
+};
+
 export const DEFAULT_CANDIDATE_PROFILE: CandidateProfile = {
   name: 'Teja Matta',
+  email: 'tejamatta05@gmail.com',
+  phone: '+91 8522074021',
   portfolio: 'https://teja-matta-portfolio.vercel.app/',
-  linkedin: 'https://www.linkedin.com/in/teja-matta-602b3531a',
+  linkedin: 'https://www.linkedin.com/in/teja-matta-602b3531a/',
   github: 'https://github.com/teja05-45',
   targetFocus: 'AI/ML Engineering, Generative AI, LLM Systems & Full-Stack AI Agents',
   skills: [
     'Python',
     'PyTorch',
     'TensorFlow',
-    'Generative AI',
-    'LLMs',
+    'Scikit-learn',
     'LangChain',
-    'LlamaIndex',
-    'Transformers',
-    'AI Agents',
+    'LangGraph',
+    'OpenAI/Claude APIs',
     'FastAPI',
-    'TypeScript',
-    'Node.js',
     'PostgreSQL',
+    'Redis',
+    'Pinecone',
+    'ChromaDB',
+    'FAISS',
     'Docker',
-    'Data Science',
-    'Computer Vision',
-    'NLP',
+    'AWS',
+    'SQL',
   ],
-  education: 'B.Tech in Computer Science & Engineering',
-  bio: 'Aspiring AI/ML engineer focused on building robust generative AI pipelines, LLM fine-tuning, autonomous agents, and high-performance backend microservices.',
-  resumeFileName: 'Teja_Matta_Resume.pdf',
-  resumeUploadedAt: new Date().toISOString(),
-  resumeContentText: `TEJA MATTA
-Bengaluru, India | Portfolio: https://teja-matta-portfolio.vercel.app/ | LinkedIn: https://www.linkedin.com/in/teja-matta-602b3531a | GitHub: https://github.com/teja05-45
-
-OBJECTIVE:
-Aspiring AI/ML & Software Engineer seeking internship and early-career opportunities to contribute to generative AI, large language models, agentic reasoning systems, and scalable backend platforms.
-
-SKILLS:
-- Core Languages: Python, TypeScript, JavaScript, SQL, C++, Go
-- AI/ML & Data: PyTorch, TensorFlow, Scikit-Learn, Hugging Face Transformers, LangChain, LlamaIndex, Vector DBs (Chroma, Pinecone, pgvector), NLP, Computer Vision, Speech AI
-- Backend & Cloud: Node.js, Express, FastAPI, PostgreSQL, MongoDB, Redis, Docker, Git, REST APIs, GraphQL, Linux
-
-PROJECTS:
-- Autonomous Multi-Agent Research Assistant: Built LLM agent framework using LangChain, Tool Use, and ChromaDB for automated technical document synthesis.
-- Real-time Speech-to-Text & Sentiment Intelligence: Developed streaming audio transcription pipeline with fine-tuned Whisper & FastAPI.
-- High-Performance API Gateway & GraphQL Aggregator: Designed scalable microservices layer in Python & TypeScript with PostgreSQL backend.`,
+  education: 'B.Tech CSE | RGUKT',
+  bio: 'B.Tech Computer Science Engineering student at RGUKT, graduating in 2027. Building production-style GenAI and ML systems, RAG pipelines, and agentic workflows.',
+  resumeFileId: null,
+  resumeFileName: null,
+  resumeMimeType: null,
+  resumeSize: null,
+  resumeStoragePath: null,
+  resumeUploadedAt: null,
+  resumeUpdatedAt: null,
+  resumeContentText: null,
+  resumeSkills: [],
+  resumeProjects: [],
+  resumeHistory: [],
 };
 
 export const DEFAULT_EMAIL_CONFIG: EmailProviderConfig = {
   provider: 'SIMULATED_TEST_PROVIDER',
   senderName: 'Teja Matta',
-  senderEmail: 'benoni.bennu05@gmail.com',
+  senderEmail: 'tejamatta05@gmail.com',
   dailySendLimit: 20,
   openAppCooldownDays: 30,
   safetyDelayMs: 1500,
@@ -333,7 +354,13 @@ class Store {
     contacts: [],
     open_applications: [],
     applications: [],
+    outreach_records: [],
+    outreach_settings: { ...DEFAULT_OUTREACH_SETTINGS },
     sent_emails: [],
+    saved_jobs: [],
+    monitoring_sources: [],
+    monitoring_runs: [],
+    notifications: [],
     candidate_profile: { ...DEFAULT_CANDIDATE_PROFILE },
     email_provider_config: { ...DEFAULT_EMAIL_CONFIG },
     research_runs: [],
@@ -363,6 +390,8 @@ class Store {
           contacts: parsed.contacts || [],
           open_applications: parsed.open_applications || [],
           applications: parsed.applications || [],
+          outreach_records: parsed.outreach_records || [],
+          outreach_settings: { ...DEFAULT_OUTREACH_SETTINGS, ...(parsed.outreach_settings || {}) },
           sent_emails: parsed.sent_emails || [],
           saved_jobs: parsed.saved_jobs || [],
           monitoring_sources: parsed.monitoring_sources || [],
@@ -456,6 +485,38 @@ class Store {
         // Ensure open applications exist for seed companies if empty
         if (this.db.open_applications.length === 0) {
           this.seedOpenApplications();
+        }
+
+        // Guarantee Candidate Profile has exact approved contact details
+        this.db.candidate_profile = {
+          ...DEFAULT_CANDIDATE_PROFILE,
+          ...(this.db.candidate_profile || {}),
+          name: 'Teja Matta',
+          email: 'tejamatta05@gmail.com',
+          phone: '+91 8522074021',
+          education: 'B.Tech CSE | RGUKT',
+          github: 'https://github.com/teja05-45',
+          linkedin: 'https://www.linkedin.com/in/teja-matta-602b3531a/',
+          portfolio: 'https://teja-matta-portfolio.vercel.app/',
+        };
+
+        // Guarantee outreach records for general inquiries use the exact approved template
+        if (this.db.outreach_records && this.db.outreach_records.length > 0) {
+          this.db.outreach_records = this.db.outreach_records.map((r) => {
+            if (
+              r.outreachType === 'AI_ML_CAREER_INQUIRY' ||
+              r.outreachType === 'GENERAL_CAREER_INQUIRY' ||
+              r.outreachType === 'OPEN_APPLICATION' ||
+              !r.opportunityId
+            ) {
+              return {
+                ...r,
+                subject: APPROVED_GENERAL_INQUIRY_SUBJECT,
+                body: getApprovedGeneralInquiryBody(r.companyName),
+              };
+            }
+            return r;
+          });
         }
       } else {
         // Seed baseline
@@ -1299,6 +1360,240 @@ class Store {
       return true;
     }
     return false;
+  }
+
+  // =========================================================================
+  // --- Automated Email Outreach Pipeline Records & Settings ---
+  // =========================================================================
+
+  public getOutreachRecords(filter?: {
+    status?: string;
+    outreachType?: string;
+    companyId?: string;
+    search?: string;
+  }): OutreachRecord[] {
+    let list = [...(this.db.outreach_records || [])];
+
+    if (filter?.status && filter.status !== 'ALL') {
+      list = list.filter((r) => r.status === filter.status);
+    }
+    if (filter?.outreachType && filter.outreachType !== 'ALL') {
+      list = list.filter((r) => r.outreachType === filter.outreachType);
+    }
+    if (filter?.companyId) {
+      list = list.filter((r) => r.companyId === filter.companyId);
+    }
+    if (filter?.search) {
+      const q = filter.search.toLowerCase();
+      list = list.filter(
+        (r) =>
+          r.companyName.toLowerCase().includes(q) ||
+          (r.roleTitle && r.roleTitle.toLowerCase().includes(q)) ||
+          r.subject.toLowerCase().includes(q) ||
+          r.recipientEmail.toLowerCase().includes(q) ||
+          (r.recipientName && r.recipientName.toLowerCase().includes(q))
+      );
+    }
+
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  public getOutreachRecord(id: string): OutreachRecord | undefined {
+    return (this.db.outreach_records || []).find((r) => r.id === id);
+  }
+
+  public upsertOutreachRecord(
+    data: Omit<OutreachRecord, 'id' | 'createdAt' | 'updatedAt'> & {
+      id?: string;
+      createdAt?: string;
+      updatedAt?: string;
+    }
+  ): OutreachRecord {
+    if (!this.db.outreach_records) {
+      this.db.outreach_records = [];
+    }
+
+    const now = new Date().toISOString();
+    const cleanEmail = (data.recipientEmail || '').trim().toLowerCase();
+
+    // Check if outreach item already exists
+    const existing = this.db.outreach_records.find((r) => {
+      if (data.id && r.id === data.id) return true;
+      if (
+        r.companyId === data.companyId &&
+        r.recipientEmail.trim().toLowerCase() === cleanEmail &&
+        r.outreachType === data.outreachType &&
+        (r.opportunityId === data.opportunityId || r.openApplicationId === data.openApplicationId)
+      ) {
+        return true;
+      }
+      return false;
+    });
+
+    if (existing) {
+      Object.assign(existing, {
+        ...data,
+        recipientEmail: cleanEmail,
+        updatedAt: now,
+      });
+      this.persist();
+      return existing;
+    }
+
+    const newRecord: OutreachRecord = {
+      ...data,
+      id: data.id || `out_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      recipientEmail: cleanEmail,
+      createdAt: data.createdAt || now,
+      updatedAt: now,
+    };
+
+    this.db.outreach_records.unshift(newRecord);
+    this.persist();
+    return newRecord;
+  }
+
+  public updateOutreachStatus(
+    id: string,
+    status: OutreachStatus,
+    extra?: {
+      approvedAt?: string | null;
+      scheduledAt?: string | null;
+      sentAt?: string | null;
+      lastContactAt?: string | null;
+      nextEligibleAt?: string | null;
+      lastError?: string | null;
+      notes?: string | null;
+      providerMessageId?: string | null;
+      replyDetectedAt?: string | null;
+      threadId?: string | null;
+    }
+  ): OutreachRecord | null {
+    const item = this.getOutreachRecord(id);
+    if (!item) return null;
+
+    item.status = status;
+    item.updatedAt = new Date().toISOString();
+    if (extra?.approvedAt !== undefined) item.approvedAt = extra.approvedAt;
+    if (extra?.scheduledAt !== undefined) item.scheduledAt = extra.scheduledAt;
+    if (extra?.sentAt !== undefined) item.sentAt = extra.sentAt;
+    if (extra?.lastContactAt !== undefined) item.lastContactAt = extra.lastContactAt;
+    if (extra?.nextEligibleAt !== undefined) item.nextEligibleAt = extra.nextEligibleAt;
+    if (extra?.lastError !== undefined) item.lastError = extra.lastError;
+    if (extra?.notes !== undefined) item.notes = extra.notes;
+    if (extra?.providerMessageId !== undefined) item.providerMessageId = extra.providerMessageId;
+    if (extra?.replyDetectedAt !== undefined) item.replyDetectedAt = extra.replyDetectedAt;
+    if (extra?.threadId !== undefined) item.threadId = extra.threadId;
+
+    this.persist();
+    return item;
+  }
+
+  public deleteOutreachRecord(id: string): boolean {
+    if (!this.db.outreach_records) return false;
+    const idx = this.db.outreach_records.findIndex((r) => r.id === id);
+    if (idx !== -1) {
+      this.db.outreach_records.splice(idx, 1);
+      this.persist();
+      return true;
+    }
+    return false;
+  }
+
+  public getOutreachSettings(): OutreachSettings {
+    return this.db.outreach_settings || { ...DEFAULT_OUTREACH_SETTINGS };
+  }
+
+  public updateOutreachSettings(updates: Partial<OutreachSettings>): OutreachSettings {
+    this.db.outreach_settings = {
+      ...this.getOutreachSettings(),
+      ...updates,
+    };
+    this.persist();
+    return this.db.outreach_settings;
+  }
+
+  public isCompanyDoNotContact(companyId: string): boolean {
+    const settings = this.getOutreachSettings();
+    return (settings.doNotContactCompanyIds || []).includes(companyId);
+  }
+
+  public toggleDoNotContactCompany(companyId: string, flag?: boolean): boolean {
+    const settings = this.getOutreachSettings();
+    const list = new Set(settings.doNotContactCompanyIds || []);
+    const shouldAdd = flag !== undefined ? flag : !list.has(companyId);
+    
+    if (shouldAdd) {
+      list.add(companyId);
+    } else {
+      list.delete(companyId);
+    }
+
+    this.updateOutreachSettings({
+      doNotContactCompanyIds: Array.from(list),
+    });
+
+    return shouldAdd;
+  }
+
+  public getOutreachStats(): OutreachStats {
+    const companies = this.db.companies || [];
+    const opportunities = this.db.opportunities || [];
+    const contacts = this.db.contacts || [];
+    const openApps = this.db.open_applications || [];
+    const outreachList = this.db.outreach_records || [];
+    const settings = this.getOutreachSettings();
+
+    const companiesResearched = companies.filter((c) => c.status === 'COMPLETED').length;
+    const verifiedEmails = contacts.filter(
+      (c) =>
+        c.verificationStatus === 'VERIFIED_PUBLIC' &&
+        c.email &&
+        c.email.toLowerCase() !== 'not publicly available' &&
+        c.exactMatch !== false
+    ).length;
+
+    const publicEmailsFound = contacts.filter(
+      (c) => c.email && c.email.toLowerCase() !== 'not publicly available'
+    ).length;
+
+    const openApplicationOpportunities = openApps.length;
+    const aiMlOpportunities = opportunities.filter(
+      (o) => o.category === 'AI_ML' || o.aiMlRelevance === 'CORE_AI_ML' || o.relevanceScore >= 60
+    ).length;
+
+    const draftsReady = outreachList.filter(
+      (r) => r.status === 'DRAFT_READY' || r.status === 'REVIEW_REQUIRED' || r.status === 'APPROVED'
+    ).length;
+
+    const scheduled = outreachList.filter((r) => r.status === 'SCHEDULED').length;
+    const sentToday = this.getTodaySentCount();
+    const totalSent = outreachList.filter((r) => r.status === 'SENT').length + (this.db.sent_emails || []).length;
+    const failed = outreachList.filter((r) => r.status === 'FAILED').length;
+    const replies = outreachList.filter((r) => r.status === 'REPLIED').length;
+    const followUpPending = outreachList.filter((r) => r.status === 'FOLLOW_UP').length;
+    const inCooldown = outreachList.filter((r) => r.status === 'COOLDOWN').length;
+
+    const dailyLimit = settings.dailySendLimit || 20;
+    const dailyLimitRemaining = Math.max(0, dailyLimit - sentToday);
+
+    return {
+      companiesResearched,
+      publicEmailsFound,
+      verifiedEmails,
+      openApplicationOpportunities,
+      aiMlOpportunities,
+      draftsReady,
+      scheduled,
+      sentToday,
+      totalSent,
+      failed,
+      replies,
+      followUpPending,
+      inCooldown,
+      dailyLimitRemaining,
+      dailyLimit,
+    };
   }
 
   // --- Candidate Profile & Resume Management ---

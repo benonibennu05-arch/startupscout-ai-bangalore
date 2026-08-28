@@ -97,6 +97,40 @@ export class ResearchController {
     });
   }
 
+  public async startIncremental(req: Request, res: Response) {
+    try {
+      const mode = (req.body?.mode as ResearchMode) || 'FAST';
+      const concurrency = req.body?.concurrency ? Number(req.body.concurrency) : 10;
+      const status = await researchQueue.startIncrementalResearch(mode, concurrency);
+      res.json({
+        success: true,
+        message: `Incremental update research started (${concurrency} workers, ${mode} mode).`,
+        status,
+      });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err?.message || 'Failed to start incremental research' });
+    }
+  }
+
+  public async startNewCompanies(req: Request, res: Response) {
+    try {
+      const mode = (req.body?.mode as ResearchMode) || 'FAST';
+      const concurrency = req.body?.concurrency ? Number(req.body.concurrency) : 10;
+      const status = await researchQueue.startNewCompaniesResearch(mode, concurrency);
+      res.json({
+        success: true,
+        message: `New companies research started (${concurrency} workers, ${mode} mode).`,
+        status,
+      });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err?.message || 'Failed to start new companies research' });
+    }
+  }
+
+  public startFailedOnly(req: Request, res: Response) {
+    return this.retryFailed(req, res);
+  }
+
   public async verifyAll(req: Request, res: Response) {
     try {
       const status = await researchQueue.verifyAll();

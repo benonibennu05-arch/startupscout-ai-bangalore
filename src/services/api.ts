@@ -158,6 +158,8 @@ export const api = {
   // Opportunities
   async getOpportunities(params: {
     search?: string;
+    category?: string;
+    aiMlRelevance?: string;
     type?: string;
     experienceLevel?: string;
     remote?: string;
@@ -165,10 +167,16 @@ export const api = {
     minRelevance?: number;
     hasEmail?: boolean;
     hasApp?: boolean;
+    isInternship?: boolean;
+    isNew?: boolean;
+    isSaved?: boolean;
+    userApplicationStatus?: string;
     sort?: string;
   } = {}): Promise<{ total: number; opportunities: (Opportunity & { publicEmail: string | null })[] }> {
     const query = new URLSearchParams();
     if (params.search) query.set('search', params.search);
+    if (params.category) query.set('category', params.category);
+    if (params.aiMlRelevance) query.set('aiMlRelevance', params.aiMlRelevance);
     if (params.type) query.set('type', params.type);
     if (params.experienceLevel) query.set('experienceLevel', params.experienceLevel);
     if (params.remote) query.set('remote', params.remote);
@@ -176,13 +184,11 @@ export const api = {
     if (params.minRelevance) query.set('minRelevance', params.minRelevance.toString());
     if (params.hasEmail) query.set('hasEmail', 'true');
     if (params.hasApp) query.set('hasApp', 'true');
+    if (params.isInternship) query.set('isInternship', 'true');
+    if (params.isNew) query.set('isNew', 'true');
+    if (params.isSaved) query.set('isSaved', 'true');
+    if (params.userApplicationStatus) query.set('userApplicationStatus', params.userApplicationStatus);
     if (params.sort) query.set('sort', params.sort);
-    if ((params as any).category) query.set('category', (params as any).category);
-    if ((params as any).aiMlRelevance) query.set('aiMlRelevance', (params as any).aiMlRelevance);
-    if ((params as any).isInternship) query.set('isInternship', 'true');
-    if ((params as any).isNew) query.set('isNew', 'true');
-    if ((params as any).isSaved) query.set('isSaved', 'true');
-    if ((params as any).userApplicationStatus) query.set('userApplicationStatus', (params as any).userApplicationStatus);
 
     const res = await fetch(`/api/opportunities?${query.toString()}`);
     return res.json();
@@ -454,7 +460,21 @@ export const api = {
     return res.json();
   },
 
-  // Candidate Profile
+  // Candidate Profile & Resume
+  async getProfile(): Promise<{ success: boolean; profile: CandidateProfile }> {
+    const res = await fetch('/api/profile');
+    return res.json();
+  },
+
+  async updateProfile(profile: Partial<CandidateProfile>): Promise<{ success: boolean; profile: CandidateProfile }> {
+    const res = await fetch('/api/profile', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(profile),
+    });
+    return res.json();
+  },
+
   async getCandidateProfile(): Promise<CandidateProfile> {
     const res = await fetch('/api/candidate-profile');
     return res.json();
@@ -465,6 +485,104 @@ export const api = {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(profile),
+    });
+    return res.json();
+  },
+
+  async getResumeStatus(): Promise<{
+    uploaded: boolean;
+    hasResume: boolean;
+    fileId: string | null;
+    filename: string | null;
+    originalName?: string;
+    mimeType?: string | null;
+    size: number;
+    uploadedAt: string | null;
+    updatedAt?: string | null;
+    version?: number;
+    extractedSkills?: string[];
+    extractedProjects?: string[];
+    extractedExperience?: string;
+    history?: any[];
+  }> {
+    const res = await fetch('/api/profile/resume');
+    return res.json();
+  },
+
+  async uploadResume(
+    file: File,
+    onProgress?: (percent: number) => void
+  ): Promise<{
+    success: boolean;
+    message?: string;
+    errorCode?: string;
+    resume?: any;
+    profile?: CandidateProfile;
+  }> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const formData = new FormData();
+      formData.append('resume', file);
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && onProgress) {
+          const percent = Math.round((event.loaded / event.total) * 100);
+          onProgress(percent);
+        }
+      };
+
+      xhr.onload = () => {
+        try {
+          const json = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(json);
+          } else {
+            resolve(json || { success: false, message: `Upload failed with status ${xhr.status}` });
+          }
+        } catch (err) {
+          resolve({ success: false, message: 'Invalid response from server' });
+        }
+      };
+
+      xhr.onerror = () => {
+        resolve({ success: false, message: 'Network error during resume upload.' });
+      };
+
+      xhr.open('POST', '/api/profile/resume');
+      xhr.send(formData);
+    });
+  },
+
+  async deleteResume(): Promise<{ success: boolean; message: string; profile?: CandidateProfile }> {
+    const res = await fetch('/api/profile/resume', {
+      method: 'DELETE',
+    });
+    return res.json();
+  },
+
+  getResumeDownloadUrl(fileId?: string): string {
+    return fileId ? `/api/profile/resume/download?fileId=${encodeURIComponent(fileId)}` : '/api/profile/resume/download';
+  },
+
+  async selectResumeVersion(fileId: string): Promise<{ success: boolean; message?: string; resume?: any; profile?: CandidateProfile }> {
+    const res = await fetch('/api/profile/resume/select-version', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileId }),
+    });
+    return res.json();
+  },
+
+  async sendTestResumeEmail(recipientEmail: string): Promise<{
+    success: boolean;
+    message: string;
+    attachmentName?: string;
+    attachmentSize?: number;
+  }> {
+    const res = await fetch('/api/profile/resume/test-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipientEmail }),
     });
     return res.json();
   },
@@ -492,6 +610,200 @@ export const api = {
 
   async updateSettings(settings: Partial<UserSettings>): Promise<{ success: boolean; settings: UserSettings }> {
     const res = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+    return res.json();
+  },
+
+  // =========================================================================
+  // --- Automated Email Outreach Pipeline API Client ---
+  // =========================================================================
+
+  async getOutreachRecords(params: {
+    status?: string;
+    outreachType?: string;
+    companyId?: string;
+    search?: string;
+  } = {}): Promise<any[]> {
+    const query = new URLSearchParams();
+    if (params.status) query.set('status', params.status);
+    if (params.outreachType) query.set('outreachType', params.outreachType);
+    if (params.companyId) query.set('companyId', params.companyId);
+    if (params.search) query.set('search', params.search);
+
+    const res = await fetch(`/api/outreach?${query.toString()}`);
+    return res.json();
+  },
+
+  async getReadyOutreach(): Promise<any[]> {
+    const res = await fetch('/api/outreach/ready');
+    return res.json();
+  },
+
+  async getSentOutreach(): Promise<any[]> {
+    const res = await fetch('/api/outreach/sent');
+    return res.json();
+  },
+
+  async getScheduledOutreach(): Promise<any[]> {
+    const res = await fetch('/api/outreach/scheduled');
+    return res.json();
+  },
+
+  async getOutreachStats(): Promise<any> {
+    const res = await fetch('/api/outreach/stats');
+    return res.json();
+  },
+
+  async getOutreachRecord(id: string): Promise<any> {
+    const res = await fetch(`/api/outreach/${id}`);
+    return res.json();
+  },
+
+  async generateOutreach(params: {
+    companyId: string;
+    opportunityId?: string | null;
+    openApplicationId?: string | null;
+    outreachType?: string;
+    recipientEmail?: string;
+  }): Promise<{ success: boolean; outreach: any }> {
+    const res = await fetch('/api/outreach/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    return res.json();
+  },
+
+  async testOutreachPipeline(count = 5): Promise<{ success: boolean; createdCount: number; items: any[] }> {
+    const res = await fetch('/api/outreach/test-pipeline', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ count }),
+    });
+    return res.json();
+  },
+
+  async autoDraftAllOutreach(): Promise<{ totalCompanies: number; eligible: number; draftsCreated: number }> {
+    const res = await fetch('/api/outreach/auto-draft', {
+      method: 'POST',
+    });
+    return res.json();
+  },
+
+  async updateOutreach(id: string, updates: any): Promise<any> {
+    const res = await fetch(`/api/outreach/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    return res.json();
+  },
+
+  async deleteOutreach(id: string): Promise<{ success: boolean }> {
+    const res = await fetch(`/api/outreach/${id}`, {
+      method: 'DELETE',
+    });
+    return res.json();
+  },
+
+  async approveOutreach(id: string): Promise<{ success: boolean; outreach: any }> {
+    const res = await fetch(`/api/outreach/${id}/approve`, {
+      method: 'POST',
+    });
+    return res.json();
+  },
+
+  async skipOutreach(id: string, reason?: string): Promise<{ success: boolean; outreach: any }> {
+    const res = await fetch(`/api/outreach/${id}/skip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    });
+    return res.json();
+  },
+
+  async scheduleOutreach(id: string, scheduledAt: string): Promise<{ success: boolean; outreach: any }> {
+    const res = await fetch(`/api/outreach/${id}/schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scheduledAt }),
+    });
+    return res.json();
+  },
+
+  async sendOutreach(
+    id: string,
+    overrides?: { subject?: string; body?: string; recipientEmail?: string }
+  ): Promise<{ success: boolean; message: string; record?: any; outreach?: any }> {
+    const res = await fetch(`/api/outreach/${id}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(overrides || {}),
+    });
+    return res.json();
+  },
+
+  async sendBatchOutreach(
+    outreachIds: string[]
+  ): Promise<{ sent: number; failed: number; skipped: number; results: { id: string; success: boolean; message: string }[] }> {
+    const res = await fetch('/api/outreach/batch-send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ outreachIds }),
+    });
+    return res.json();
+  },
+
+  async toggleCompanyDoNotContact(companyId: string, flag?: boolean): Promise<{ success: boolean; isDoNotContact: boolean }> {
+    const res = await fetch(`/api/outreach/company/${companyId}/toggle-dnc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flag }),
+    });
+    return res.json();
+  },
+
+  // Email & Provider Management
+  async getEmailStatus(): Promise<any> {
+    const res = await fetch('/api/email/status');
+    return res.json();
+  },
+
+  async connectGmail(accountEmail?: string, accessToken?: string): Promise<any> {
+    const res = await fetch('/api/email/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountEmail, accessToken }),
+    });
+    return res.json();
+  },
+
+  async disconnectGmail(): Promise<any> {
+    const res = await fetch('/api/email/disconnect', {
+      method: 'POST',
+    });
+    return res.json();
+  },
+
+  async sendTestEmail(toEmail?: string): Promise<{ success: boolean; message: string; messageId?: string }> {
+    const res = await fetch('/api/email/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ toEmail }),
+    });
+    return res.json();
+  },
+
+  async getOutreachSettings(): Promise<any> {
+    const res = await fetch('/api/settings/outreach');
+    return res.json();
+  },
+
+  async updateOutreachSettings(settings: any): Promise<{ success: boolean; settings: any }> {
+    const res = await fetch('/api/settings/outreach', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),

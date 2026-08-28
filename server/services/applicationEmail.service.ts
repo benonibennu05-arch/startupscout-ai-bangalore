@@ -1,4 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
 import {
   Application,
   Company,
@@ -9,27 +8,14 @@ import {
   SentEmailRecord,
 } from '../types.ts';
 import { store } from '../database/store.ts';
+import { resumeService } from './resume.service.ts';
+import { geminiClient } from '../ai/geminiClient.ts';
 import { logger } from '../utils/logger.ts';
-
-let aiClient: GoogleGenAI | null = null;
-
-function getGenAiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
-    return null;
-  }
-  if (!aiClient) {
-    aiClient = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
-  }
-  return aiClient;
-}
+import {
+  APPROVED_GENERAL_INQUIRY_SUBJECT,
+  getApprovedGeneralInquiryBody,
+  APPROVED_CANDIDATE_INFO,
+} from '../templates/approvedEmailTemplate.ts';
 
 export interface GeneratedEmailDraft {
   subject: string;
@@ -40,7 +26,8 @@ export interface GeneratedEmailDraft {
 
 export class ApplicationEmailService {
   /**
-   * Generates a company-tailored personalized cold application email
+   * Generates a company-tailored application or career inquiry email.
+   * For general career inquiries and open applications, the exact approved template is used programmatically.
    */
   public async generateEmailContent(params: {
     company: Company;
@@ -48,105 +35,21 @@ export class ApplicationEmailService {
     openApplication?: OpenApplication | null;
     candidate?: CandidateProfile;
   }): Promise<GeneratedEmailDraft> {
-    const candidate = params.candidate || store.getCandidateProfile();
     const { company, opportunity, openApplication } = params;
 
-    const isCurrentRole = Boolean(opportunity && opportunity.title);
-    const targetTitle = opportunity?.title || 'AI / ML & Software Engineering Opportunities';
-    const roleType = opportunity?.type || 'INTERNSHIP';
+    const subject = APPROVED_GENERAL_INQUIRY_SUBJECT;
+    const body = getApprovedGeneralInquiryBody(company.name);
 
-    const ai = getGenAiClient();
-    if (ai) {
-      try {
-        const prompt = `You are a professional career advisor assisting a high-caliber candidate in writing a personalized, compelling job application email.
-
-Candidate Profile:
-- Name: ${candidate.name}
-- Target: ${candidate.targetFocus}
-- Skills: ${candidate.skills.slice(0, 10).join(', ')}
-- Portfolio: ${candidate.portfolio}
-- LinkedIn: ${candidate.linkedin}
-- GitHub: ${candidate.github}
-- Education: ${candidate.education}
-
-Company:
-- Name: ${company.name}
-- Sector/Description: ${company.description || company.sector || 'Bangalore High-Growth Tech Startup'}
-- Website: ${company.officialWebsite || 'Official Company'}
-
-Application Context:
-${
-  isCurrentRole
-    ? `Specific Role Opening: "${opportunity?.title}"
-Job Description: "${opportunity?.description || ''}"
-Key Requirements: "${(opportunity?.requirements || []).join(', ')}"
-Key Skills: "${(opportunity?.skills || []).join(', ')}"`
-    : `Open Application / Talent Pool Inquiry:
-Company Statement/Evidence: "${openApplication?.evidence || 'Open talent pool inquiry'}"
-Target Area: AI/ML Engineering, Generative AI, LLM systems, or Backend Engineering internships / fresher roles.`
-}
-
-Guidelines:
-1. Subject line: Clear, professional, role-specific with candidate name.
-2. Email Body: 150-220 words.
-3. Structure:
-   - Respectful, personalized opening addressing the hiring team and referencing ${company.name}'s specific domain.
-   - Specific connection: ${isCurrentRole ? `why candidate is a strong fit for "${opportunity?.title}"` : `explaining candidate's strong interest in ${company.name} and inquiry for upcoming AI/ML or Software opportunities`}.
-   - Highlight 2-3 specific technical strengths (e.g. PyTorch, LLMs, LangChain, FastAPI, agentic workflows).
-   - Reference attached resume (${candidate.resumeFileName || 'Teja_Matta_Resume.pdf'}), portfolio (${candidate.portfolio}), and GitHub (${candidate.github}).
-   - Professional closing offering a brief conversation.
-4. Tone: Confident, humble, authentic, zero AI fluff, zero exaggeration.
-
-Return strict JSON:
-{
-  "subject": "...",
-  "body": "...",
-  "matchScore": 92,
-  "matchReason": "Strong alignment with LLM / AI systems and backend stack"
-}`;
-
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.7-flash',
-          contents: prompt,
-          config: {
-            responseMimeType: 'application/json',
-          },
-        });
-
-        const text = response.text?.trim();
-        if (text) {
-          const parsed = JSON.parse(text);
-          return {
-            subject: parsed.subject || this.getDefaultSubject(company.name, targetTitle, candidate.name, isCurrentRole),
-            body: parsed.body || this.getDeterministicBody(company, opportunity, openApplication, candidate),
-            matchScore: parsed.matchScore || 88,
-            matchReason: parsed.matchReason || `Matched skills with ${company.name}`,
-          };
-        }
-      } catch (err: any) {
-        logger.warn(`Gemini application email generation fallback: ${err?.message}`);
-      }
-    }
-
-    // Deterministic High-Quality Template Fallback
     return {
-      subject: this.getDefaultSubject(company.name, targetTitle, candidate.name, isCurrentRole),
-      body: this.getDeterministicBody(company, opportunity, openApplication, candidate),
+      subject,
+      body,
       matchScore: opportunity?.relevanceScore || openApplication?.relevanceScore || 88,
-      matchReason: isCurrentRole
-        ? `Direct skill match with ${opportunity?.title} at ${company.name}`
-        : `Verified open application opportunity for AI & Software roles at ${company.name}`,
+      matchReason: `General AI/ML & Software Engineering Career Inquiry to ${company.name}`,
     };
   }
 
   private getDefaultSubject(companyName: string, roleTitle: string, candidateName: string, isCurrentRole: boolean): string {
-    if (isCurrentRole) {
-      if (roleTitle.toLowerCase().includes('intern')) {
-        return `Application: ${roleTitle} - ${candidateName}`;
-      }
-      return `Application for ${roleTitle} - ${candidateName}`;
-    }
-    return `Inquiry: AI/ML & Software Engineering Opportunities - ${candidateName}`;
+    return APPROVED_GENERAL_INQUIRY_SUBJECT;
   }
 
   private getDeterministicBody(
@@ -155,50 +58,7 @@ Return strict JSON:
     openApplication?: OpenApplication | null,
     candidate?: CandidateProfile
   ): string {
-    const cand = candidate || store.getCandidateProfile();
-    const recipientGreeting = 'Dear ' + company.name + ' Hiring Team,';
-
-    if (opportunity && opportunity.title) {
-      const isInternship = opportunity.type === 'INTERNSHIP' || opportunity.title.toLowerCase().includes('intern');
-      return `${recipientGreeting}
-
-I am writing to express my strong interest in the ${opportunity.title} role at ${company.name}. Having closely followed your work in ${company.sector || 'technology'}, I am deeply impressed by your engineering focus.
-
-I specialize in ${cand.targetFocus}, with hands-on experience building generative AI pipelines, LLM-powered autonomous agents, and scalable backend services using Python, PyTorch, FastAPI, and TypeScript. In my recent projects, I developed end-to-end multi-agent retrieval frameworks and low-latency API architectures.
-
-I would welcome the opportunity to bring my hands-on technical skills and enthusiasm to the ${opportunity.title} position.
-
-My resume is attached for your review. You can also explore my portfolio and code here:
-- Portfolio: ${cand.portfolio}
-- GitHub: ${cand.github}
-- LinkedIn: ${cand.linkedin}
-
-Thank you for your time and consideration. I would be thrilled to speak with your team.
-
-Best regards,
-${cand.name}
-Bengaluru, India`;
-    }
-
-    // Open Application Body
-    return `${recipientGreeting}
-
-I noticed on your careers page that ${company.name} welcomes open applications and outreach from passionate builders ("${openApplication?.evidence ? openApplication.evidence.slice(0, 100) + '...' : 'always looking for exceptional talent'}").
-
-I am an aspiring AI/ML and Software Engineer based in Bengaluru with a strong focus on Generative AI, Large Language Models, AI Agent architectures, and high-performance Python backends. I have built production-ready tools using PyTorch, Hugging Face, LangChain, and FastAPI.
-
-I would love to explore whether there are current or upcoming internship or entry-level software/AI engineering opportunities with your team at ${company.name}.
-
-I have attached my resume (${cand.resumeFileName || 'Teja_Matta_Resume.pdf'}) with complete details. You can also review my work and open-source projects here:
-- Portfolio: ${cand.portfolio}
-- GitHub: ${cand.github}
-- LinkedIn: ${cand.linkedin}
-
-Thank you for your time, and I look forward to the possibility of connecting.
-
-Warm regards,
-${cand.name}
-Bengaluru, India`;
+    return getApprovedGeneralInquiryBody(company.name);
   }
 
   /**
@@ -332,11 +192,20 @@ Bengaluru, India`;
     const candidate = store.getCandidateProfile();
     const config = store.getEmailProviderConfig();
 
-    // Safety Rule 1: Resume Must Be Uploaded
-    if (!candidate.resumeFileName) {
+    // Safety Rule 1: Resume Must Be Uploaded & Present in Persistent Storage
+    const currentResume = resumeService.getCurrentResume();
+    if (!currentResume || !candidate.resumeFileName) {
       return {
         success: false,
-        message: 'Cannot send application: Resume must be uploaded in Candidate Profile first.',
+        message: 'Resume Required: Please upload your resume in My Profile before sending applications.',
+      };
+    }
+
+    const fileBuffer = resumeService.getResumeFileBuffer(app.resumeFileId || currentResume.fileId);
+    if (!fileBuffer) {
+      return {
+        success: false,
+        message: `STORAGE_FAILED: Resume binary file (${currentResume.originalName}) is missing from storage. Please re-upload your resume.`,
       };
     }
 

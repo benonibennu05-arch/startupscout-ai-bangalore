@@ -6,10 +6,12 @@ import { CompaniesPage } from './pages/CompaniesPage';
 import { OpportunitiesPage } from './pages/OpportunitiesPage';
 import { OpenApplicationsPage } from './pages/OpenApplicationsPage';
 import { ApplicationsPipelinePage } from './pages/ApplicationsPipelinePage';
+import { OutreachPipelinePage } from './pages/OutreachPipelinePage';
 import { ContactsPage } from './pages/ContactsPage';
 import { ResearchRunsPage } from './pages/ResearchRunsPage';
 import { FailedResearchPage } from './pages/FailedResearchPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ProfilePage } from './pages/ProfilePage';
 import { CompanyDetailModal } from './components/CompanyDetailModal';
 import { OpportunityDetailModal } from './components/OpportunityDetailModal';
 import { ExportModal } from './components/ExportModal';
@@ -207,6 +209,10 @@ export function App() {
             />
           )}
 
+          {activeTab === 'profile' && (
+            <ProfilePage />
+          )}
+
           {activeTab === 'companies' && (
             <CompaniesPage onSelectCompany={setSelectedCompanyId} />
           )}
@@ -218,8 +224,12 @@ export function App() {
           {activeTab === 'open_applications' && (
             <OpenApplicationsPage
               onSelectCompany={setSelectedCompanyId}
-              onNavigateToPipeline={() => setActiveTab('applications')}
+              onNavigateToPipeline={() => setActiveTab('outreach')}
             />
+          )}
+
+          {activeTab === 'outreach' && (
+            <OutreachPipelinePage />
           )}
 
           {activeTab === 'applications' && (

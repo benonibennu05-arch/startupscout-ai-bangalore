@@ -58,10 +58,12 @@ export class MonitoringService {
         .slice(0, maxCompanies);
 
       store.addEvent({
-        eventType: 'GENERAL_DISCOVERY',
-        title: 'Continuous Monitoring Cycle Started',
-        description: `Monitoring cycle evaluating ${candidateCompanies.length} Bangalore tech companies for new jobs, internships, and verified contacts.`,
-        severity: 'INFO',
+        companyId: 'SYSTEM',
+        companyName: 'Continuous Monitoring',
+        event: 'MONITORING_STARTED',
+        message: `Monitoring cycle evaluating ${candidateCompanies.length} Bangalore tech companies for new jobs, internships, and verified contacts.`,
+        stage: 'DISCOVER_COMPANIES',
+        type: 'info',
       });
 
       for (const comp of candidateCompanies) {
@@ -71,7 +73,7 @@ export class MonitoringService {
         const prevContactsCount = store.getContactsForCompany(comp.id).length;
 
         // Perform live targeted research for this company
-        const result = await companyResearchService.researchCompany(comp.id);
+        const result = await companyResearchService.researchCompany(comp);
 
         if (result && result.opportunities) {
           const currentOpps = store.getOpportunitiesForCompany(comp.id);
@@ -136,10 +138,12 @@ export class MonitoringService {
 
       store.addMonitoringRun(run);
       store.addEvent({
-        eventType: 'MONITORING_ALERT',
-        title: 'Continuous Monitoring Cycle Completed',
-        description: run.summary,
-        severity: newOpportunitiesFound > 0 ? 'SUCCESS' : 'INFO',
+        companyId: 'SYSTEM',
+        companyName: 'Continuous Monitoring',
+        event: 'MONITORING_COMPLETED',
+        message: run.summary,
+        stage: 'COMPLETE',
+        type: newOpportunitiesFound > 0 ? 'success' : 'info',
       });
 
       return run;

@@ -1,27 +1,8 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { Type } from '@google/genai';
 import { OpportunityType, ExperienceLevel, EmailType } from '../types.ts';
 import { SYSTEM_PROMPTS, buildJobClassificationPrompt } from './prompts.ts';
+import { geminiClient } from './geminiClient.ts';
 import { logger } from '../utils/logger.ts';
-
-let aiClient: GoogleGenAI | null = null;
-
-function getGenAiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
-    return null;
-  }
-  if (!aiClient) {
-    aiClient = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
-  }
-  return aiClient;
-}
 
 export interface ClassifiedJobResult {
   title: string;
@@ -47,60 +28,54 @@ export class GeminiService {
     targetRoles: string[] = [],
     targetSkills: string[] = []
   ): Promise<ClassifiedJobResult> {
-    const ai = getGenAiClient();
-    if (!ai) {
-      return this.heuristicClassify(title, description, targetRoles, targetSkills);
-    }
+    if (geminiClient.isAvailable()) {
+      try {
+        const prompt = buildJobClassificationPrompt(title, description, companyName, targetRoles, targetSkills);
 
-    try {
-      const prompt = buildJobClassificationPrompt(title, description, companyName, targetRoles, targetSkills);
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.7-flash',
-        contents: prompt,
-        config: {
-          systemInstruction: SYSTEM_PROMPTS.JOB_CLASSIFIER,
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              type: { type: Type.STRING },
-              experienceLevel: { type: Type.STRING },
-              remote: { type: Type.STRING },
-              skills: { type: Type.ARRAY, items: { type: Type.STRING } },
-              responsibilities: { type: Type.ARRAY, items: { type: Type.STRING } },
-              requirements: { type: Type.ARRAY, items: { type: Type.STRING } },
-              salary: { type: Type.STRING, nullable: true },
-              isFresherFriendly: { type: Type.BOOLEAN },
-              relevanceScore: { type: Type.INTEGER },
+        const text = await geminiClient.safeGenerateContent({
+          prompt,
+          config: {
+            systemInstruction: SYSTEM_PROMPTS.JOB_CLASSIFIER,
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                type: { type: Type.STRING },
+                experienceLevel: { type: Type.STRING },
+                remote: { type: Type.STRING },
+                skills: { type: Type.ARRAY, items: { type: Type.STRING } },
+                responsibilities: { type: Type.ARRAY, items: { type: Type.STRING } },
+                requirements: { type: Type.ARRAY, items: { type: Type.STRING } },
+                salary: { type: Type.STRING, nullable: true },
+                isFresherFriendly: { type: Type.BOOLEAN },
+                relevanceScore: { type: Type.INTEGER },
+              },
+              required: ['type', 'experienceLevel', 'remote', 'skills', 'responsibilities', 'requirements', 'relevanceScore'],
             },
-            required: ['type', 'experienceLevel', 'remote', 'skills', 'responsibilities', 'requirements', 'relevanceScore'],
           },
-        },
-      });
+        });
 
-      const text = response.text?.trim();
-      if (!text) {
-        throw new Error('Empty response from Gemini');
+        if (text) {
+          const parsed = JSON.parse(text);
+          return {
+            title,
+            type: (parsed.type as OpportunityType) || 'FULL_TIME',
+            experienceLevel: (parsed.experienceLevel as ExperienceLevel) || 'UNKNOWN',
+            remote: parsed.remote || 'UNKNOWN',
+            skills: Array.isArray(parsed.skills) && parsed.skills.length > 0 ? parsed.skills : ['Software Development'],
+            responsibilities: Array.isArray(parsed.responsibilities) ? parsed.responsibilities : [],
+            requirements: Array.isArray(parsed.requirements) ? parsed.requirements : [],
+            salary: parsed.salary || null,
+            isFresherFriendly: Boolean(parsed.isFresherFriendly),
+            relevanceScore: typeof parsed.relevanceScore === 'number' ? Math.min(100, Math.max(0, parsed.relevanceScore)) : 50,
+          };
+        }
+      } catch (err: any) {
+        // Handled cleanly via heuristic fallback
       }
-
-      const parsed = JSON.parse(text);
-      return {
-        title,
-        type: (parsed.type as OpportunityType) || 'FULL_TIME',
-        experienceLevel: (parsed.experienceLevel as ExperienceLevel) || 'UNKNOWN',
-        remote: parsed.remote || 'UNKNOWN',
-        skills: Array.isArray(parsed.skills) && parsed.skills.length > 0 ? parsed.skills : ['Software Development'],
-        responsibilities: Array.isArray(parsed.responsibilities) ? parsed.responsibilities : [],
-        requirements: Array.isArray(parsed.requirements) ? parsed.requirements : [],
-        salary: parsed.salary || null,
-        isFresherFriendly: Boolean(parsed.isFresherFriendly),
-        relevanceScore: typeof parsed.relevanceScore === 'number' ? Math.min(100, Math.max(0, parsed.relevanceScore)) : 50,
-      };
-    } catch (err: any) {
-      logger.warn(`Gemini AI classification fallback for "${title}": ${err?.message}`);
-      return this.heuristicClassify(title, description, targetRoles, targetSkills);
     }
+
+    return this.heuristicClassify(title, description, targetRoles, targetSkills);
   }
 
   /**

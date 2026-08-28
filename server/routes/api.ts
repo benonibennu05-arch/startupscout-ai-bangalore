@@ -9,10 +9,13 @@ import { researchRouter } from './research.routes.ts';
 import { exportRouter } from './export.routes.ts';
 import { settingsRouter } from './settings.routes.ts';
 import { applicationsRouter } from './applications.routes.ts';
+import { outreachRouter, emailRouter, outreachSettingsRouter } from './outreach.routes.ts';
 import { exportService } from '../services/export.service.ts';
 import { verificationService } from '../services/verification.service.ts';
 import { companyResearchService } from '../services/companyResearch.service.ts';
 import { monitoringService } from '../services/monitoring.service.ts';
+
+import { profileRouter } from './profile.routes.ts';
 
 export const apiRouter = Router();
 
@@ -23,7 +26,11 @@ apiRouter.use('/opportunities', opportunitiesRouter);
 apiRouter.use('/contacts', contactsRouter);
 apiRouter.use('/research', researchRouter);
 apiRouter.use('/export', exportRouter);
+apiRouter.use('/settings/outreach', outreachSettingsRouter);
 apiRouter.use('/settings', settingsRouter);
+apiRouter.use('/outreach', outreachRouter);
+apiRouter.use('/email', emailRouter);
+apiRouter.use('/profile', profileRouter);
 apiRouter.use('/', applicationsRouter);
 
 // --- Direct top-level aliases for frontend compatibility ---
