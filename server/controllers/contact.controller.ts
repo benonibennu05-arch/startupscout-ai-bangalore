@@ -4,10 +4,11 @@ import { EmailType, EmailVerificationStatus } from '../types.ts';
 
 export class ContactController {
   public getAll(req: Request, res: Response) {
-    const { companyId, emailType, verificationStatus, search, onlyWithEmail } = req.query;
+    const { companyId, emailType, verificationStatus, search, onlyWithEmail, location, sourceMap } = req.query;
 
     const contacts = emailService.listContacts({
       companyId: companyId ? String(companyId) : undefined,
+      location: (location as string) || (sourceMap as string) || undefined,
       emailType: emailType ? (String(emailType) as EmailType | 'ALL') : undefined,
       verificationStatus: verificationStatus
         ? (String(verificationStatus) as EmailVerificationStatus | 'ALL')
@@ -24,7 +25,8 @@ export class ContactController {
   }
 
   public getStats(req: Request, res: Response) {
-    const stats = emailService.getContactStats();
+    const location = (req.query.location as string) || (req.query.sourceMap as string) || undefined;
+    const stats = emailService.getContactStats(location);
     res.json({
       success: true,
       stats,

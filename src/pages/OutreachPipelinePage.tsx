@@ -39,13 +39,32 @@ import {
   OutreachStatus,
   OutreachType,
   CandidateProfile,
+  LocationScope,
 } from '../types';
 
-export const OutreachPipelinePage: React.FC = () => {
+interface OutreachPipelinePageProps {
+  selectedLocation?: LocationScope;
+}
+
+export const OutreachPipelinePage: React.FC<OutreachPipelinePageProps> = ({
+  selectedLocation = 'BANGALORE',
+}) => {
   const [records, setRecords] = useState<OutreachRecord[]>([]);
   const [stats, setStats] = useState<OutreachStats | null>(null);
   const [settings, setSettings] = useState<OutreachSettings | null>(null);
   const [candidate, setCandidate] = useState<CandidateProfile | null>(null);
+  const [emailStatus, setEmailStatus] = useState<{
+    connected: boolean;
+    canSend: boolean;
+    accountEmail: string;
+    expectedEmail: string;
+    isAuthConfigured: boolean;
+    error?: string | null;
+    scopes?: string[];
+    sentToday: number;
+    dailyLimit: number;
+    remainingToday: number;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -64,7 +83,9 @@ export const OutreachPipelinePage: React.FC = () => {
   // Settings Modal
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isTestEmailOpen, setIsTestEmailOpen] = useState(false);
+  const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
   const [testEmailAddress, setTestEmailAddress] = useState('tejamatta05@gmail.com');
+  const [authConnecting, setAuthConnecting] = useState(false);
 
   const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
     setToastMessage({ text, type });
@@ -74,28 +95,139 @@ export const OutreachPipelinePage: React.FC = () => {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [recordsRes, statsRes, settingsRes, candidateRes] = await Promise.all([
-        api.getOutreachRecords(),
-        api.getOutreachStats(),
+      const [recordsRes, statsRes, settingsRes, candidateRes, emailRes] = await Promise.all([
+        api.getOutreachRecords({ location: selectedLocation }),
+        api.getOutreachStats(selectedLocation),
         api.getOutreachSettings(),
         api.getCandidateProfile(),
+        api.getEmailStatus(),
       ]);
 
       setRecords(recordsRes || []);
       setStats(statsRes || null);
       setSettings(settingsRes || null);
       setCandidate(candidateRes || null);
+      setEmailStatus(emailRes || null);
     } catch (err: any) {
       console.error('Failed to load outreach pipeline data:', err);
       showToast('Failed to load outreach records', 'error');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedLocation]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Handle Google OAuth 2.0 callback params from URL
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const oauthStatus = urlParams.get('oauth');
+    const oauthMessage = urlParams.get('message');
+    const oauthEmail = urlParams.get('email');
+
+    if (oauthStatus === 'success') {
+      showToast(`Gmail account (${oauthEmail || 'tejamatta05@gmail.com'}) successfully authenticated via Google OAuth 2.0!`, 'success');
+      window.history.replaceState({}, document.title, window.location.pathname);
+      loadData();
+    } else if (oauthStatus === 'wrong_account') {
+      showToast(`OAuth Rejected: Authenticated as ${oauthEmail || 'another account'}, but this pipeline requires tejamatta05@gmail.com.`, 'error');
+      window.history.replaceState({}, document.title, window.location.pathname);
+      loadData();
+    } else if (oauthStatus === 'error') {
+      showToast(`OAuth Error: ${oauthMessage || 'Authentication failed'}`, 'error');
+      window.history.replaceState({}, document.title, window.location.pathname);
+      loadData();
+    }
+  }, [loadData]);
+
+  // Action: Connect Gmail via OAuth / GIS Popup
+  const handleConnectGmail = async () => {
+    try {
+      setAuthConnecting(true);
+      setActionLoading(true);
+      
+      const clientId = emailStatus?.clientId;
+
+      // Ensure GIS script is ready
+      if (!(window as any).google?.accounts?.oauth2) {
+        await new Promise<void>((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = 'https://accounts.google.com/gsi/client';
+          script.async = true;
+          script.defer = true;
+          script.onload = () => resolve();
+          script.onerror = () => reject(new Error('Failed to load Google Identity Services library'));
+          document.head.appendChild(script);
+        }).catch(() => null);
+      }
+
+      if (clientId && (window as any).google?.accounts?.oauth2) {
+        const tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: 'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
+          callback: async (tokenResponse: any) => {
+            setAuthConnecting(false);
+            setActionLoading(false);
+            if (tokenResponse.error) {
+              showToast(`Google Sign-In: ${tokenResponse.error_description || tokenResponse.error}`, 'error');
+              return;
+            }
+            try {
+              setActionLoading(true);
+              const res = await api.submitGoogleAccessToken(tokenResponse.access_token, tokenResponse.expires_in);
+              if (res.success) {
+                showToast(`Gmail account (${res.email || 'tejamatta05@gmail.com'}) successfully authenticated!`, 'success');
+                setIsConnectModalOpen(false);
+                await loadData();
+              } else {
+                showToast(res.error || 'Failed to authenticate Google account', 'error');
+              }
+            } catch (err: any) {
+              showToast(err?.message || 'Failed to submit access token', 'error');
+            } finally {
+              setActionLoading(false);
+            }
+          },
+          error_callback: (err: any) => {
+            setAuthConnecting(false);
+            setActionLoading(false);
+            showToast(err?.message || 'OAuth popup window closed or blocked', 'error');
+          }
+        });
+        tokenClient.requestAccessToken({ prompt: 'consent' });
+        return;
+      }
+
+      // Fallback to server route redirect
+      const res = await api.getGoogleAuthUrl(window.location.pathname);
+      if (res.authUrl) {
+        window.location.href = res.authUrl;
+      } else if (res.error) {
+        showToast(res.error, 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to initiate Google OAuth', 'error');
+    } finally {
+      setAuthConnecting(false);
+      setActionLoading(false);
+    }
+  };
+
+  // Action: Disconnect Gmail
+  const handleDisconnectGmail = async () => {
+    try {
+      setActionLoading(true);
+      await api.disconnectGmail();
+      showToast('Gmail account disconnected', 'info');
+      await loadData();
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to disconnect Gmail', 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   // Action: Test Outreach Pipeline (5 Drafts)
   const handleTestOutreachPipeline = async () => {
@@ -166,6 +298,11 @@ export const OutreachPipelinePage: React.FC = () => {
   // Action: Send Single Outreach
   const handleSendNow = async (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    if (!emailStatus?.connected) {
+      showToast('Gmail not connected. Please authenticate tejamatta05@gmail.com first.', 'error');
+      setIsConnectModalOpen(true);
+      return;
+    }
     try {
       setActionLoading(true);
       const res = await api.sendOutreach(id);
@@ -187,6 +324,11 @@ export const OutreachPipelinePage: React.FC = () => {
 
   // Action: Batch Send Approved
   const handleBatchSendApproved = async () => {
+    if (!emailStatus?.connected) {
+      showToast('Gmail not connected. Please authenticate tejamatta05@gmail.com first.', 'error');
+      setIsConnectModalOpen(true);
+      return;
+    }
     const approved = records.filter((r) => r.status === 'APPROVED');
     if (approved.length === 0) {
       showToast('No approved drafts ready to send. Approve drafts first.', 'info');
@@ -229,6 +371,11 @@ export const OutreachPipelinePage: React.FC = () => {
   // Action: Send from Modal with Edits
   const handleSendFromModal = async () => {
     if (!selectedRecord) return;
+    if (!emailStatus?.connected) {
+      showToast('Gmail not connected. Please authenticate tejamatta05@gmail.com first.', 'error');
+      setIsConnectModalOpen(true);
+      return;
+    }
     try {
       setActionLoading(true);
       const res = await api.sendOutreach(selectedRecord.id, {
@@ -252,6 +399,11 @@ export const OutreachPipelinePage: React.FC = () => {
 
   // Action: Send Test Email
   const handleSendTestEmail = async () => {
+    if (!emailStatus?.connected) {
+      showToast('Gmail not connected. Please authenticate tejamatta05@gmail.com first.', 'error');
+      setIsConnectModalOpen(true);
+      return;
+    }
     try {
       setActionLoading(true);
       const res = await api.sendTestEmail(testEmailAddress);
@@ -544,15 +696,98 @@ export const OutreachPipelinePage: React.FC = () => {
                 Cooldown:{' '}
                 <strong className="text-gray-900">{settings?.cooldownDays || 30} Days</strong>
               </span>
-              <button
-                onClick={() => setIsTestEmailOpen(true)}
-                className="text-emerald-700 hover:text-emerald-800 font-medium underline cursor-pointer"
-              >
-                Send Test Email
-              </button>
             </div>
           </div>
         )}
+      </div>
+
+      {/* Gmail Sender Account & OAuth Status Card */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-xs">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3">
+            <div
+              className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                emailStatus?.connected
+                  ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                  : 'bg-amber-100 text-amber-700 border border-amber-200'
+              }`}
+            >
+              <Mail className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-sm font-bold text-gray-900">Gmail Delivery Engine</h2>
+                {emailStatus?.connected ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Authenticated ({emailStatus.accountEmail})
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-600" /> Gmail OAuth Required
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-gray-100 text-gray-600">
+                  Target Sender: <strong className="text-gray-900">tejamatta05@gmail.com</strong>
+                </span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                {emailStatus?.connected
+                  ? 'Real Gmail API integration active with Google OAuth 2.0 (gmail.send scope). Sent emails will originate directly from your Gmail inbox with your resume attached.'
+                  : 'Emails will be sent via your personal Gmail account (tejamatta05@gmail.com). Authenticate securely using Google OAuth 2.0 without entering passwords.'}
+              </p>
+              {emailStatus?.error && (
+                <div className="mt-2 text-xs text-rose-700 bg-rose-50 border border-rose-200 px-2.5 py-1 rounded-md flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                  <span>{emailStatus.error}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-start md:self-center shrink-0">
+            {emailStatus?.connected ? (
+              <>
+                <button
+                  id="btn-send-test-email"
+                  onClick={() => setIsTestEmailOpen(true)}
+                  disabled={actionLoading}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-semibold transition cursor-pointer"
+                >
+                  <Send className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>Send Test Email</span>
+                </button>
+                <button
+                  id="btn-disconnect-gmail"
+                  onClick={handleDisconnectGmail}
+                  disabled={actionLoading}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 text-xs font-medium transition cursor-pointer"
+                >
+                  <span>Disconnect</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  id="btn-connect-gmail-oauth"
+                  onClick={handleConnectGmail}
+                  disabled={actionLoading}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs transition cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4 text-blue-200" />
+                  <span>Connect Gmail (tejamatta05@gmail.com)</span>
+                </button>
+                <button
+                  id="btn-send-test-email-unconnected"
+                  onClick={() => setIsTestEmailOpen(true)}
+                  disabled={actionLoading}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-300 text-xs font-medium transition cursor-pointer"
+                >
+                  <span>Test Send</span>
+                </button>
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Metrics Row */}
@@ -1125,6 +1360,73 @@ export const OutreachPipelinePage: React.FC = () => {
                 className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs shadow-xs"
               >
                 Send Test
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Gmail OAuth Connect Modal */}
+      {isConnectModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full border border-gray-200 overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="px-6 py-4 bg-blue-50 border-b border-blue-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Mail className="w-5 h-5 text-blue-600" />
+                <h3 className="text-sm font-bold text-gray-900">Connect Your Gmail Account</h3>
+              </div>
+              <button
+                onClick={() => setIsConnectModalOpen(false)}
+                className="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-amber-900 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold">Gmail Connection Required to Send</p>
+                  <p className="text-[11px] text-amber-800 mt-0.5">
+                    Before sending test emails or cold job applications, you must authorize your sender account (<strong>tejamatta05@gmail.com</strong>) using Google OAuth 2.0.
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-gray-600">
+                <p className="font-medium text-gray-800">What happens when you connect?</p>
+                <ul className="list-disc pl-4 space-y-1 text-[11px]">
+                  <li>A secure Google sign-in popup will open.</li>
+                  <li>Sign in with <strong>tejamatta05@gmail.com</strong>.</li>
+                  <li>Grant permission to send emails on your behalf (<code className="bg-gray-100 px-1 py-0.5 rounded">gmail.send</code>).</li>
+                  <li>No passwords are stored. All emails are dispatched through official Google APIs with your resume attached.</li>
+                </ul>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  id="btn-modal-connect-gmail"
+                  onClick={handleConnectGmail}
+                  disabled={authConnecting || actionLoading}
+                  className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-xs transition cursor-pointer disabled:opacity-50"
+                >
+                  {authConnecting ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4 text-blue-200" />
+                  )}
+                  <span>{authConnecting ? 'Opening Google Sign-In...' : 'Connect Gmail Account (tejamatta05@gmail.com)'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex justify-end">
+              <button
+                onClick={() => setIsConnectModalOpen(false)}
+                className="px-4 py-2 bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 font-medium rounded-lg text-xs"
+              >
+                Close
               </button>
             </div>
           </div>

@@ -27,15 +27,24 @@ export class EmailService {
     const now = new Date().toISOString();
 
     for (const item of extracted) {
+      if (!item.email) continue;
+
+      if (item.email.toLowerCase() !== 'not publicly available' && !isValidEmail(item.email)) {
+        logger.debug(
+          `[EmailService] Skipped invalid email candidate ${item.email} for ${companyName}.`
+        );
+        continue;
+      }
+
       // Hard Backend Enforcement: Independent exact match check before saving
       let isExact = item.exactMatch;
-      if (item.email && item.email.toLowerCase() !== 'not publicly available') {
+      if (item.email.toLowerCase() !== 'not publicly available') {
         isExact = verifyExactMatchInSource(item.email, html);
       }
 
-      if (!isExact && item.email && item.email.toLowerCase() !== 'not publicly available') {
-        logger.warn(
-          `[EmailService] REJECTED email ${item.email} for ${companyName}: Exact string not found in retrieved source content.`
+      if (!isExact && item.email.toLowerCase() !== 'not publicly available') {
+        logger.debug(
+          `[EmailService] Filtered unverified candidate ${item.email} for ${companyName}: Exact string not found in retrieved source content.`
         );
         // Do not persist unevidenced emails as valid contacts
         continue;
@@ -83,7 +92,7 @@ export class EmailService {
    * Lists contacts with optional filtering. Default view returns VERIFIED_PUBLIC only.
    */
   public listContacts(filter: ContactFilter = {}): Contact[] {
-    let contacts = store.getContacts();
+    let contacts = store.getContacts({ location: filter.location });
 
     // 1. Filter by Company
     if (filter.companyId) {
@@ -129,6 +138,7 @@ export class EmailService {
 
     return contacts;
   }
+
 
   /**
    * Live re-verification of an individual contact against its source URL
@@ -305,8 +315,8 @@ export class EmailService {
   /**
    * Detailed breakdown stats of stored contacts
    */
-  public getContactStats() {
-    const contacts = store.getContacts();
+  public getContactStats(location?: string) {
+    const contacts = store.getContacts({ location });
     const verifiedPublic = contacts.filter(
       (c) => c.verificationStatus === 'VERIFIED_PUBLIC' && c.email && c.email.toLowerCase() !== 'not publicly available'
     );

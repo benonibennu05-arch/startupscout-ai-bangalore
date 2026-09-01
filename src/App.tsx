@@ -16,10 +16,11 @@ import { CompanyDetailModal } from './components/CompanyDetailModal';
 import { OpportunityDetailModal } from './components/OpportunityDetailModal';
 import { ExportModal } from './components/ExportModal';
 import { api, QueueStatusResponse } from './services/api';
-import { ResearchEvent, Opportunity, Company, Contact, ResearchMode } from './types';
+import { ResearchEvent, Opportunity, Company, Contact, ResearchMode, LocationScope } from './types';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+  const [selectedLocation, setSelectedLocation] = useState<LocationScope>('BANGALORE');
   const [queueStatus, setQueueStatus] = useState<QueueStatusResponse | null>(null);
   const [selectedMode, setSelectedMode] = useState<ResearchMode>('FAST');
   const [selectedConcurrency, setSelectedConcurrency] = useState<number>(10);
@@ -37,13 +38,13 @@ export function App() {
   const [isVerifying, setIsVerifying] = useState(false);
 
   // Fetch initial dashboard & state data
-  const refreshDashboardData = useCallback(async () => {
+  const refreshDashboardData = useCallback(async (loc: LocationScope = selectedLocation) => {
     try {
       const [statusRes, oppsRes, compsRes, contactsRes, eventsRes] = await Promise.all([
-        api.getStatus(),
-        api.getOpportunities({ sort: 'relevance' }),
-        api.getCompanies({ sort: 'newest' }),
-        api.getContacts(),
+        api.getStatus(loc),
+        api.getOpportunities({ sort: 'relevance', location: loc }),
+        api.getCompanies({ sort: 'newest', location: loc }),
+        api.getContacts({ location: loc }),
         api.getEvents(20),
       ]);
 
@@ -57,10 +58,10 @@ export function App() {
     } catch (err) {
       console.error('Error loading dashboard state:', err);
     }
-  }, []);
+  }, [selectedLocation]);
 
   useEffect(() => {
-    refreshDashboardData();
+    refreshDashboardData(selectedLocation);
 
     // Subscribe to real-time SSE stream
     const unsubscribe = api.subscribeEvents((msg) => {
@@ -83,25 +84,35 @@ export function App() {
         msg.event === 'RESEARCH_COMPLETED' ||
         msg.event === 'VERIFICATION_COMPLETED'
       ) {
-        api.getStatus().then(setQueueStatus).catch(() => {});
+        api.getStatus(selectedLocation).then(setQueueStatus).catch(() => {});
         api.getEvents(20).then(setEvents).catch(() => {});
-        api.getOpportunities({ sort: 'relevance' }).then((r) => setRecentOpportunities(r.opportunities || [])).catch(() => {});
-        api.getCompanies({ sort: 'newest' }).then((r) => setRecentCompanies(r.companies || [])).catch(() => {});
-        api.getContacts().then((r) => setRecentContacts(r.contacts || [])).catch(() => {});
+        api.getOpportunities({ sort: 'relevance', location: selectedLocation }).then((r) => setRecentOpportunities(r.opportunities || [])).catch(() => {});
+        api.getCompanies({ sort: 'newest', location: selectedLocation }).then((r) => setRecentCompanies(r.companies || [])).catch(() => {});
+        api.getContacts({ location: selectedLocation }).then((r) => setRecentContacts(r.contacts || [])).catch(() => {});
       }
     });
 
     return () => {
       unsubscribe();
     };
-  }, [refreshDashboardData]);
+  }, [refreshDashboardData, selectedLocation]);
+
+  const handleLocationChange = async (loc: LocationScope) => {
+    setSelectedLocation(loc);
+    try {
+      await api.setLocation(loc);
+    } catch (e) {
+      console.error(e);
+    }
+    refreshDashboardData(loc);
+  };
 
   // Actions
   const handleStartTest10 = async () => {
     try {
-      const res = await api.startTest10(selectedMode, selectedConcurrency);
+      const res = await api.startTest10(selectedMode, selectedConcurrency, selectedLocation);
       if (res.status) setQueueStatus(res.status);
-      refreshDashboardData();
+      refreshDashboardData(selectedLocation);
     } catch (e) {
       console.error(e);
     }
@@ -109,9 +120,9 @@ export function App() {
 
   const handleStartFull = async () => {
     try {
-      const res = await api.startFullResearch(selectedMode, selectedConcurrency);
+      const res = await api.startFullResearch(selectedMode, selectedConcurrency, selectedLocation);
       if (res.status) setQueueStatus(res.status);
-      refreshDashboardData();
+      refreshDashboardData(selectedLocation);
     } catch (e) {
       console.error(e);
     }
@@ -151,7 +162,7 @@ export function App() {
   };
 
   const handleRetryFailed = async () => {
-    const res = await api.retryFailed(selectedConcurrency);
+    const res = await api.retryFailed(selectedConcurrency, selectedLocation);
     if (res.status) setQueueStatus(res.status);
   };
 
@@ -159,13 +170,20 @@ export function App() {
     setIsVerifying(true);
     try {
       await api.verifyAllOpportunities();
-      await refreshDashboardData();
+      await refreshDashboardData(selectedLocation);
     } catch (e) {
       console.error(e);
     } finally {
       setIsVerifying(false);
     }
   };
+
+  const locationSubtitle =
+    selectedLocation === 'BOTH'
+      ? 'Bangalore & Hyderabad Startup Ecosystems'
+      : selectedLocation === 'HYDERABAD'
+      ? 'Hyderabad Startup Map (hyderabadstartupsmap.lol)'
+      : 'Bangalore Startup Map (bangalorestartupmap.com)';
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-gray-900 antialiased selection:bg-blue-100 selection:text-blue-900">
@@ -176,6 +194,8 @@ export function App() {
         onModeChange={handleModeChange}
         selectedConcurrency={selectedConcurrency}
         onConcurrencyChange={handleConcurrencyChange}
+        selectedLocation={selectedLocation}
+        onLocationChange={handleLocationChange}
         onStartTest10={handleStartTest10}
         onStartFull={handleStartFull}
         onOpenExport={() => setIsExportOpen(true)}
@@ -189,6 +209,7 @@ export function App() {
           activeTab={activeTab}
           onTabChange={setActiveTab}
           queueStatus={queueStatus}
+          selectedLocation={selectedLocation}
         />
 
         <main className="flex-1 p-4 md:p-6 max-w-7xl w-full mx-auto overflow-y-auto">
@@ -196,6 +217,8 @@ export function App() {
             <DashboardPage
               queueStatus={queueStatus}
               events={events}
+              selectedLocation={selectedLocation}
+              onLocationChange={handleLocationChange}
               onNavigate={setActiveTab}
               onPause={handlePause}
               onResume={handleResume}
@@ -206,6 +229,8 @@ export function App() {
               recentOpportunities={recentOpportunities}
               recentCompanies={recentCompanies}
               recentContacts={recentContacts}
+              onStartTest10={handleStartTest10}
+              onStartFull={handleStartFull}
             />
           )}
 
@@ -214,22 +239,37 @@ export function App() {
           )}
 
           {activeTab === 'companies' && (
-            <CompaniesPage onSelectCompany={setSelectedCompanyId} />
+            <CompaniesPage
+              onSelectCompany={setSelectedCompanyId}
+              selectedLocation={selectedLocation}
+            />
           )}
 
           {activeTab === 'opportunities' && (
-            <OpportunitiesPage onSelectOpportunity={setSelectedOpportunity} />
+            <OpportunitiesPage
+              onSelectOpportunity={setSelectedOpportunity}
+              selectedLocation={selectedLocation}
+              pageTitle={
+                selectedLocation === 'BOTH'
+                  ? 'All Startup Opportunities (Bangalore & Hyderabad)'
+                  : selectedLocation === 'HYDERABAD'
+                  ? 'Hyderabad Startup Opportunities'
+                  : 'Bangalore Startup Opportunities'
+              }
+              pageSubtitle={`Discover ALL jobs, internships, and open roles across ${locationSubtitle}`}
+            />
           )}
 
           {activeTab === 'open_applications' && (
             <OpenApplicationsPage
               onSelectCompany={setSelectedCompanyId}
               onNavigateToPipeline={() => setActiveTab('outreach')}
+              selectedLocation={selectedLocation}
             />
           )}
 
           {activeTab === 'outreach' && (
-            <OutreachPipelinePage />
+            <OutreachPipelinePage selectedLocation={selectedLocation} />
           )}
 
           {activeTab === 'applications' && (
@@ -239,32 +279,56 @@ export function App() {
           {activeTab === 'internships' && (
             <OpportunitiesPage
               onSelectOpportunity={setSelectedOpportunity}
+              selectedLocation={selectedLocation}
               presetType="INTERNSHIP"
-              pageTitle="Bangalore Startup Internships"
-              pageSubtitle="Internships, summer trainee programs, and apprenticeship openings across Bangalore tech startups"
+              pageTitle={
+                selectedLocation === 'BOTH'
+                  ? 'Startup Internships (Bangalore & Hyderabad)'
+                  : selectedLocation === 'HYDERABAD'
+                  ? 'Hyderabad Startup Internships'
+                  : 'Bangalore Startup Internships'
+              }
+              pageSubtitle={`Internships, summer trainee programs, and apprenticeship openings across ${locationSubtitle}`}
             />
           )}
 
           {activeTab === 'aiml' && (
             <OpportunitiesPage
               onSelectOpportunity={setSelectedOpportunity}
+              selectedLocation={selectedLocation}
               presetMinScore={60}
-              pageTitle="Bangalore AI / ML & GenAI Opportunities"
-              pageSubtitle="Top ranked machine learning, LLM engineering, and data intelligence positions"
+              pageTitle={
+                selectedLocation === 'BOTH'
+                  ? 'AI / ML & GenAI Opportunities (Bangalore & Hyderabad)'
+                  : selectedLocation === 'HYDERABAD'
+                  ? 'Hyderabad AI / ML & GenAI Opportunities'
+                  : 'Bangalore AI / ML & GenAI Opportunities'
+              }
+              pageSubtitle={`Top ranked machine learning, LLM engineering, and data intelligence positions in ${locationSubtitle}`}
             />
           )}
 
           {activeTab === 'fresher' && (
             <OpportunitiesPage
               onSelectOpportunity={setSelectedOpportunity}
+              selectedLocation={selectedLocation}
               presetExperience={['FRESHER', 'ENTRY_LEVEL', 'INTERN', 'JUNIOR']}
-              pageTitle="Fresher & Early-Career Positions"
-              pageSubtitle="0-2 years experience, college graduate, and entry-level startup roles"
+              pageTitle={
+                selectedLocation === 'BOTH'
+                  ? 'Fresher & Early-Career Positions (Both Hubs)'
+                  : selectedLocation === 'HYDERABAD'
+                  ? 'Hyderabad Fresher & Early-Career Positions'
+                  : 'Bangalore Fresher & Early-Career Positions'
+              }
+              pageSubtitle={`0-2 years experience, college graduate, and entry-level startup roles in ${locationSubtitle}`}
             />
           )}
 
           {activeTab === 'contacts' && (
-            <ContactsPage onSelectCompany={setSelectedCompanyId} />
+            <ContactsPage
+              onSelectCompany={setSelectedCompanyId}
+              selectedLocation={selectedLocation}
+            />
           )}
 
           {activeTab === 'runs' && <ResearchRunsPage />}
@@ -288,13 +352,13 @@ export function App() {
           setSelectedCompanyId(null);
           setSelectedOpportunity(opp);
         }}
-        onRefreshData={refreshDashboardData}
+        onRefreshData={() => refreshDashboardData(selectedLocation)}
       />
 
       <OpportunityDetailModal
         opportunity={selectedOpportunity}
         onClose={() => setSelectedOpportunity(null)}
-        onRefresh={refreshDashboardData}
+        onRefresh={() => refreshDashboardData(selectedLocation)}
       />
 
       <ExportModal
@@ -306,3 +370,4 @@ export function App() {
 }
 
 export default App;
+

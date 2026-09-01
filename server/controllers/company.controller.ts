@@ -2,30 +2,18 @@ import { Request, Response } from 'express';
 import { store } from '../database/store.ts';
 import { startupMapService } from '../services/startupMap.service.ts';
 import { researchQueue } from '../queue/researchQueue.ts';
+import { StartupMapSource } from '../types.ts';
 
 export class CompanyController {
   public getAll(req: Request, res: Response) {
-    const { status, sector, stage, search } = req.query;
-    let companies = store.getCompanies();
-
-    if (status) {
-      companies = companies.filter((c) => c.status === status);
-    }
-    if (sector) {
-      companies = companies.filter((c) => c.sector?.toLowerCase() === String(sector).toLowerCase());
-    }
-    if (stage) {
-      companies = companies.filter((c) => c.startupStage?.toLowerCase() === String(stage).toLowerCase());
-    }
-    if (search) {
-      const q = String(search).toLowerCase();
-      companies = companies.filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          c.sector?.toLowerCase().includes(q) ||
-          c.tags.some((t) => t.toLowerCase().includes(q))
-      );
-    }
+    const { status, sector, stage, search, location, sourceMap } = req.query;
+    let companies = store.getCompanies({
+      location: (location as string) || (sourceMap as string),
+      status: status as string,
+      sector: sector as string,
+      stage: stage as string,
+      search: search as string,
+    });
 
     res.json({
       success: true,
@@ -54,10 +42,12 @@ export class CompanyController {
 
   public async discover(req: Request, res: Response) {
     try {
-      const result = await startupMapService.discoverCompanies();
+      const source = (req.body?.source as StartupMapSource | 'BOTH') || (req.query.location as any) || 'BANGALORE';
+      const result = await startupMapService.discoverCompanies(source);
+      const sourceLabel = source === 'HYDERABAD' ? 'Hyderabad Startups Map (https://www.hyderabadstartupsmap.lol/)' : source === 'BOTH' ? 'Bangalore & Hyderabad Maps' : 'Bangalore Startup Map (https://www.bangalorestartupmap.com/)';
       res.json({
         success: true,
-        message: `Successfully crawled Bangalore Startup Map.`,
+        message: `Successfully crawled ${sourceLabel}.`,
         ...result,
       });
     } catch (err: any) {
@@ -81,3 +71,4 @@ export class CompanyController {
 }
 
 export const companyController = new CompanyController();
+

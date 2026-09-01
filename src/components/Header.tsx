@@ -9,9 +9,11 @@ import {
   Zap,
   Layers,
   Cpu,
+  MapPin,
+  Globe,
 } from 'lucide-react';
 import { QueueStatusResponse } from '../services/api';
-import { ResearchMode } from '../types';
+import { ResearchMode, LocationScope } from '../types';
 
 interface HeaderProps {
   queueStatus: QueueStatusResponse | null;
@@ -19,6 +21,8 @@ interface HeaderProps {
   onModeChange: (mode: ResearchMode) => void;
   selectedConcurrency: number;
   onConcurrencyChange: (concurrency: number) => void;
+  selectedLocation: LocationScope;
+  onLocationChange: (loc: LocationScope) => void;
   onStartTest10: () => void;
   onStartFull: () => void;
   onOpenExport: () => void;
@@ -32,6 +36,8 @@ export const Header: React.FC<HeaderProps> = ({
   onModeChange,
   selectedConcurrency,
   onConcurrencyChange,
+  selectedLocation,
+  onLocationChange,
   onStartTest10,
   onStartFull,
   onOpenExport,
@@ -39,6 +45,30 @@ export const Header: React.FC<HeaderProps> = ({
   isVerifying,
 }) => {
   const isRunning = queueStatus?.status === 'RUNNING';
+  const stats = queueStatus?.stats as any;
+  const companyStats = stats?.companyStats;
+
+  const blrCount = companyStats?.bangalore?.stored ?? (stats?.totalCompanies && selectedLocation === 'BANGALORE' ? stats.totalCompanies : 'Live');
+  const hydCount = companyStats?.hyderabad?.stored ?? (stats?.totalCompanies && selectedLocation === 'HYDERABAD' ? stats.totalCompanies : 'Live');
+  const bothCount = companyStats?.combined?.stored ?? (stats?.totalCompanies && selectedLocation === 'BOTH' ? stats.totalCompanies : 'Live');
+
+  const locationLabels: Record<LocationScope, { title: string; subtitle: string; badge: string }> = {
+    BANGALORE: {
+      title: 'Bangalore Startup Map',
+      subtitle: `bangalorestartupmap.com (${blrCount} Startups in Database)`,
+      badge: 'Bangalore',
+    },
+    HYDERABAD: {
+      title: 'Hyderabad Startups Map',
+      subtitle: `hyderabadstartupsmap.lol (${hydCount} Startups in Database)`,
+      badge: 'Hyderabad',
+    },
+    BOTH: {
+      title: 'Bangalore & Hyderabad Maps',
+      subtitle: `Dual Ecosystem Research (${bothCount} Canonical Startups)`,
+      badge: 'Both Hubs',
+    },
+  };
 
   return (
     <header
@@ -55,19 +85,65 @@ export const Header: React.FC<HeaderProps> = ({
               StartupScout <span className="text-blue-600">AI</span>
             </h1>
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-              <Sparkles className="w-3 h-3 text-blue-600" /> Parallel Map Intelligence
+              <Sparkles className="w-3 h-3 text-blue-600" /> Dual Map Intelligence
             </span>
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
               <Zap className="w-3 h-3 text-emerald-600" /> High-Speed Worker Pool
             </span>
           </div>
-          <p className="text-xs text-gray-500 font-medium mt-0.5">
-            Discovers 957+ Bangalore Startup Map companies in parallel with ATS scraping & verified recruiter emails
+          <p className="text-xs text-gray-500 font-medium mt-0.5 flex items-center gap-1.5 flex-wrap">
+            <span>Target: <strong className="text-gray-800">{locationLabels[selectedLocation].title}</strong> ({locationLabels[selectedLocation].subtitle})</span>
           </p>
         </div>
       </div>
 
       <div className="flex items-center flex-wrap gap-2.5">
+        {/* Location / Startup Map Source Selector */}
+        <div className="flex items-center bg-gray-100 p-0.5 rounded-lg border border-gray-200 text-xs">
+          <button
+            type="button"
+            disabled={isRunning}
+            onClick={() => onLocationChange('BANGALORE')}
+            className={`px-3 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 ${
+              selectedLocation === 'BANGALORE'
+                ? 'bg-white text-blue-700 shadow-xs ring-1 ring-blue-600/10'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+            title="Bangalore Startup Map: https://www.bangalorestartupmap.com/"
+          >
+            <MapPin className="w-3.5 h-3.5 text-blue-600" />
+            <span>Bangalore</span>
+          </button>
+          <button
+            type="button"
+            disabled={isRunning}
+            onClick={() => onLocationChange('HYDERABAD')}
+            className={`px-3 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 ${
+              selectedLocation === 'HYDERABAD'
+                ? 'bg-white text-indigo-700 shadow-xs ring-1 ring-indigo-600/10'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+            title="Hyderabad Startups Map: https://www.hyderabadstartupsmap.lol/"
+          >
+            <MapPin className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Hyderabad</span>
+          </button>
+          <button
+            type="button"
+            disabled={isRunning}
+            onClick={() => onLocationChange('BOTH')}
+            className={`px-3 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 ${
+              selectedLocation === 'BOTH'
+                ? 'bg-white text-emerald-700 shadow-xs ring-1 ring-emerald-600/10'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+            title="Research both Bangalore and Hyderabad maps simultaneously"
+          >
+            <Globe className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Both</span>
+          </button>
+        </div>
+
         {/* Mode Selector */}
         <div className="flex items-center bg-gray-100 p-0.5 rounded-lg border border-gray-200 text-xs">
           <button
@@ -127,7 +203,7 @@ export const Header: React.FC<HeaderProps> = ({
           </select>
         </div>
 
-        {/* Test Batch (10 Startups in parallel) */}
+        {/* Test Batch */}
         <button
           id="btn-test-batch"
           onClick={onStartTest10}
@@ -137,10 +213,10 @@ export const Header: React.FC<HeaderProps> = ({
               ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
               : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-gray-400 active:bg-gray-100 shadow-xs'
           }`}
-          title="Tests high-speed parallel research on a batch of 10 startups"
+          title={`Tests high-speed parallel research on a batch of 10 startups in ${selectedLocation}`}
         >
           <FlaskConical className="w-3.5 h-3.5 text-indigo-600" />
-          Test 10 (Parallel)
+          Test 10 ({selectedLocation === 'BOTH' ? 'Both' : selectedLocation === 'HYDERABAD' ? 'Hyd' : 'Blr'})
         </button>
 
         {/* Research All Startups */}
@@ -153,10 +229,10 @@ export const Header: React.FC<HeaderProps> = ({
               ? 'bg-blue-400 text-white cursor-not-allowed'
               : 'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 ring-2 ring-blue-600/20'
           }`}
-          title="Dynamically discovers all 957+ companies on Bangalore Startup Map and runs parallel research"
+          title={`Dynamically discovers and researches startups for ${selectedLocation}`}
         >
           <Play className="w-3.5 h-3.5 fill-current" />
-          {isRunning ? 'Parallel Running...' : 'Research ALL Startups'}
+          {isRunning ? 'Running...' : `Research ALL (${selectedLocation === 'BOTH' ? 'Both Hubs' : selectedLocation === 'HYDERABAD' ? 'Hyderabad' : 'Bangalore'})`}
         </button>
 
         {/* Asynchronous Verify All */}
@@ -168,7 +244,7 @@ export const Header: React.FC<HeaderProps> = ({
           title="Asynchronously re-verifies live status for all discovered job links"
         >
           <RotateCw className={`w-3.5 h-3.5 text-emerald-600 ${isVerifying ? 'animate-spin' : ''}`} />
-          {isVerifying ? 'Verifying Links...' : 'Verify Links'}
+          {isVerifying ? 'Verifying...' : 'Verify Links'}
         </button>
 
         {/* Export */}
@@ -184,3 +260,4 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
+

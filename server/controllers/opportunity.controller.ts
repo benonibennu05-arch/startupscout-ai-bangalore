@@ -16,6 +16,7 @@ export class OpportunityController {
   public getAll(req: Request, res: Response) {
     const filter = {
       companyId: req.query.companyId as string | undefined,
+      location: (req.query.location as string) || (req.query.sourceMap as string) || undefined,
       category: req.query.category as OpportunityCategory | undefined,
       aiMlRelevance: req.query.aiMlRelevance as AiMlRelevance | undefined,
       type: req.query.type as OpportunityType | undefined,

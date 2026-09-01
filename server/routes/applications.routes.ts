@@ -7,12 +7,13 @@ export const applicationsRouter = Router();
 
 // --- Open Applications Discovery Endpoints ---
 applicationsRouter.get('/open-applications', (req, res) => {
-  const { companyId, status, onlyWithEmail, search } = req.query;
+  const { companyId, status, onlyWithEmail, search, location, sourceMap } = req.query;
   const list = store.getOpenApplications({
     companyId: companyId as string,
     status: status as string,
     onlyWithEmail: onlyWithEmail === 'true',
     search: search as string,
+    location: (location as string) || (sourceMap as string),
   });
   res.json(list);
 });
@@ -25,12 +26,13 @@ applicationsRouter.get('/open-applications/:id', (req, res) => {
 
 // --- Candidate Applications Pipeline Endpoints ---
 applicationsRouter.get('/applications', (req, res) => {
-  const { status, applicationType, companyId, search } = req.query;
+  const { status, applicationType, companyId, search, location, sourceMap } = req.query;
   const list = store.getApplications({
     status: status as string,
     applicationType: applicationType as string,
     companyId: companyId as string,
     search: search as string,
+    location: (location as string) || (sourceMap as string),
   });
   res.json(list);
 });

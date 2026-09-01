@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { store } from '../database/store.ts';
 import { outreachService } from '../services/outreach.service.ts';
+import { gmailService, EXPECTED_SENDER_EMAIL } from '../services/gmail.service.ts';
 import { OutreachStatus, OutreachType } from '../types.ts';
 
 export const outreachRouter = Router();
@@ -8,35 +9,40 @@ export const outreachRouter = Router();
 // --- Outreach Records Querying ---
 
 outreachRouter.get('/', (req, res) => {
-  const { status, outreachType, companyId, search } = req.query;
+  const { status, outreachType, companyId, search, location, sourceMap } = req.query;
   const records = store.getOutreachRecords({
     status: status as string,
     outreachType: outreachType as string,
     companyId: companyId as string,
     search: search as string,
+    location: (location as string) || (sourceMap as string),
   });
   res.json(records);
 });
 
 outreachRouter.get('/ready', (req, res) => {
-  const records = store.getOutreachRecords().filter(
+  const { location, sourceMap } = req.query;
+  const records = store.getOutreachRecords({ location: (location as string) || (sourceMap as string) }).filter(
     (r) => r.status === 'DRAFT_READY' || r.status === 'REVIEW_REQUIRED' || r.status === 'APPROVED'
   );
   res.json(records);
 });
 
 outreachRouter.get('/sent', (req, res) => {
-  const records = store.getOutreachRecords().filter((r) => r.status === 'SENT');
+  const { location, sourceMap } = req.query;
+  const records = store.getOutreachRecords({ location: (location as string) || (sourceMap as string) }).filter((r) => r.status === 'SENT');
   res.json(records);
 });
 
 outreachRouter.get('/scheduled', (req, res) => {
-  const records = store.getOutreachRecords().filter((r) => r.status === 'SCHEDULED');
+  const { location, sourceMap } = req.query;
+  const records = store.getOutreachRecords({ location: (location as string) || (sourceMap as string) }).filter((r) => r.status === 'SCHEDULED');
   res.json(records);
 });
 
 outreachRouter.get('/stats', (req, res) => {
-  res.json(store.getOutreachStats());
+  const { location, sourceMap } = req.query;
+  res.json(store.getOutreachStats((location as string) || (sourceMap as string)));
 });
 
 // --- Pipeline Actions & Generation ---
@@ -241,16 +247,23 @@ outreachRouter.post('/company/:companyId/toggle-dnc', (req, res) => {
 
 export const emailRouter = Router();
 
-emailRouter.get('/status', (req, res) => {
+emailRouter.get('/status', async (req, res) => {
   const settings = store.getOutreachSettings();
-  const config = store.getEmailProviderConfig();
   const todaySent = store.getTodaySentCount();
   const candidate = store.getCandidateProfile();
+  const accountInfo = await gmailService.getAccount();
 
   res.json({
-    connected: settings.gmailConnected,
-    accountEmail: settings.gmailAccountEmail || config.senderEmail,
-    provider: config.provider,
+    connected: accountInfo.connected,
+    email: accountInfo.email,
+    accountEmail: accountInfo.email || settings.gmailAccountEmail || EXPECTED_SENDER_EMAIL,
+    expectedEmail: EXPECTED_SENDER_EMAIL,
+    canSend: accountInfo.canSend,
+    isAuthConfigured: gmailService.isAuthConfigured(),
+    clientId: gmailService.getClientId(),
+    error: accountInfo.error,
+    scopes: accountInfo.scopes || [],
+    provider: 'gmail',
     dailyLimit: settings.dailySendLimit || 20,
     sentToday: todaySent,
     remainingToday: Math.max(0, (settings.dailySendLimit || 20) - todaySent),
@@ -261,30 +274,43 @@ emailRouter.get('/status', (req, res) => {
   });
 });
 
-emailRouter.post('/connect', (req, res) => {
-  const { accountEmail, accessToken } = req.body;
-  const updated = store.updateOutreachSettings({
-    gmailConnected: true,
-    gmailAccountEmail: accountEmail || 'tejamatta05@gmail.com',
-    gmailAccessToken: accessToken || 'simulated_oauth_token',
-  });
-  res.json({ success: true, message: 'Email provider connected successfully', settings: updated });
+emailRouter.post('/test-connection', async (req, res) => {
+  try {
+    const result = await gmailService.verifyGmailConnection();
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Connection test failed' });
+  }
 });
 
-emailRouter.post('/disconnect', (req, res) => {
-  const updated = store.updateOutreachSettings({
-    gmailConnected: false,
-    gmailAccountEmail: null,
-    gmailAccessToken: null,
-  });
-  res.json({ success: true, message: 'Email provider disconnected', settings: updated });
+emailRouter.get('/test-connection', async (req, res) => {
+  try {
+    const result = await gmailService.verifyGmailConnection();
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Connection test failed' });
+  }
+});
+
+emailRouter.post('/disconnect', async (req, res) => {
+  await gmailService.disconnect();
+  res.json({ success: true, message: 'Gmail account disconnected successfully' });
 });
 
 emailRouter.post('/test', async (req, res) => {
   try {
     const { toEmail } = req.body;
-    const recipient = toEmail || store.getOutreachSettings().gmailAccountEmail || 'tejamatta05@gmail.com';
+    const recipient = toEmail || store.getOutreachSettings().gmailAccountEmail || EXPECTED_SENDER_EMAIL;
     const result = await outreachService.sendTestEmail(recipient);
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ success: false, message: err?.message || 'Test email failed' });

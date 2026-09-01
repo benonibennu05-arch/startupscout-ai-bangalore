@@ -1,6 +1,7 @@
-import { Company, ResearchRun, ResearchStage, ResearchMode, ActiveWorkerInfo, ResearchMetrics } from '../types.ts';
+import { Company, ResearchRun, ResearchStage, ResearchMode, ActiveWorkerInfo, ResearchMetrics, LocationScope, StartupMapSource } from '../types.ts';
 import { store } from '../database/store.ts';
 import { crawlBangaloreStartupMap } from '../crawler/startupMapCrawler.ts';
+import { crawlHyderabadStartupMap } from '../crawler/hyderabadStartupMapCrawler.ts';
 import { companyResearchService } from '../services/companyResearch.service.ts';
 import { verificationQueue } from './verificationQueue.ts';
 import { logger } from '../utils/logger.ts';
@@ -11,6 +12,7 @@ class ResearchQueueManager {
   private status: QueueStatus = 'IDLE';
   private mode: ResearchMode = 'FAST';
   private concurrency: number = 10;
+  private locationScope: LocationScope = 'BANGALORE';
   private currentRun: ResearchRun | null = null;
   private queue: string[] = []; // Company IDs to process
   private activeWorkers: Map<number, ActiveWorkerInfo> = new Map();
@@ -27,7 +29,8 @@ class ResearchQueueManager {
   private rateLimitedCount: number = 0;
   private workerPromises: Array<Promise<void>> = [];
 
-  public getStatus() {
+  public getStatus(location?: LocationScope) {
+    const activeLoc = location || this.locationScope || 'BANGALORE';
     const elapsedSeconds = this.runStartTime > 0 && this.status === 'RUNNING'
       ? Math.max(1, Math.round((Date.now() - this.runStartTime) / 1000))
       : 0;
@@ -63,12 +66,13 @@ class ResearchQueueManager {
       status: this.status,
       mode: this.mode,
       concurrency: this.concurrency,
+      locationScope: this.locationScope,
       currentRun: this.currentRun,
       queueLength: this.queue.length,
       activeWorkers: Array.from(this.activeWorkers.values()),
       currentStage: this.currentStage,
       metrics,
-      stats: store.getStats(),
+      stats: store.getStats(activeLoc),
     };
   }
 
@@ -101,12 +105,51 @@ class ResearchQueueManager {
     this.broadcast('SETTINGS_UPDATED', { mode: this.mode });
   }
 
+  public setLocationScope(location: LocationScope) {
+    this.locationScope = location;
+    logger.info(`Research location scope set to: ${this.locationScope}`);
+    this.broadcast('SETTINGS_UPDATED', { locationScope: this.locationScope });
+  }
+
+  private normalizeLocation(loc?: string): LocationScope {
+    if (!loc) return this.locationScope || 'BANGALORE';
+    const lower = loc.toLowerCase();
+    if (lower.includes('hyd')) return 'HYDERABAD';
+    if (lower.includes('both') || lower.includes('all')) return 'BOTH';
+    return 'BANGALORE';
+  }
+
+  private async discoverForLocation(location: LocationScope) {
+    if (location === 'HYDERABAD') {
+      const discovered = await crawlHyderabadStartupMap();
+      for (const item of discovered) {
+        store.upsertCompany({ ...item, sourceMap: 'HYDERABAD', location: item.location || 'Hyderabad, India' });
+      }
+    } else if (location === 'BOTH') {
+      const blr = await crawlBangaloreStartupMap();
+      for (const item of blr) {
+        store.upsertCompany({ ...item, sourceMap: 'BANGALORE', location: item.location || 'Bangalore, India' });
+      }
+      const hyd = await crawlHyderabadStartupMap();
+      for (const item of hyd) {
+        store.upsertCompany({ ...item, sourceMap: 'HYDERABAD', location: item.location || 'Hyderabad, India' });
+      }
+    } else {
+      const discovered = await crawlBangaloreStartupMap();
+      for (const item of discovered) {
+        store.upsertCompany({ ...item, sourceMap: 'BANGALORE', location: item.location || 'Bangalore, India' });
+      }
+    }
+  }
+
   // --- Start Test Batch: 10 companies in parallel ---
-  public async startTest10(mode: ResearchMode = 'FAST', concurrency: number = 10) {
+  public async startTest10(mode: ResearchMode = 'FAST', concurrency: number = 10, location?: LocationScope | string) {
     if (this.status === 'RUNNING') {
       throw new Error('Research is already running. Please pause or stop first.');
     }
 
+    const loc = this.normalizeLocation(location);
+    this.locationScope = loc;
     this.mode = mode;
     this.concurrency = Math.min(10, Math.max(2, concurrency));
     this.status = 'RUNNING';
@@ -118,14 +161,11 @@ class ResearchQueueManager {
     this.rateLimitedCount = 0;
     this.abortController = new AbortController();
 
-    // Ensure we have companies discovered
-    let companies = store.getCompanies();
-    if (companies.length < 10) {
-      const discovered = await crawlBangaloreStartupMap();
-      for (const item of discovered) {
-        store.upsertCompany(item);
-      }
-      companies = store.getCompanies();
+    // Ensure we have companies discovered for the selected location
+    let companies = store.getCompanies({ location: loc });
+    if (companies.length < 5) {
+      await this.discoverForLocation(loc);
+      companies = store.getCompanies({ location: loc });
     }
 
     const uncompleted = companies.filter((c) => c.status !== 'COMPLETED');
@@ -133,15 +173,18 @@ class ResearchQueueManager {
     const testBatch = pool.slice(0, 10);
     this.queue = testBatch.map((c) => c.id);
 
+    const sourceMapValue: StartupMapSource = loc === 'HYDERABAD' ? 'HYDERABAD' : 'BANGALORE';
     this.currentRun = store.createResearchRun('TEST_10', testBatch.length);
     this.currentRun.mode = this.mode;
     this.currentRun.concurrency = this.concurrency;
+    this.currentRun.location = loc;
+    this.currentRun.sourceMap = sourceMapValue;
 
     store.addEvent({
       companyId: 'queue',
       companyName: 'Research Queue',
       event: 'TEST_BATCH_STARTED',
-      message: `Starting Parallel 10-Company Test Batch (${this.concurrency} workers, ${this.mode} mode).`,
+      message: `Starting Parallel 10-Company Test Batch for ${loc} (${this.concurrency} workers, ${this.mode} mode).`,
       stage: 'RESEARCH_COMPANY',
       type: 'info',
     });
@@ -150,19 +193,22 @@ class ResearchQueueManager {
     this.broadcast('STAGE_CHANGE', { stage: 'RESEARCH_COMPANY' });
     this.startWorkerPool();
 
-    return this.getStatus();
+    return this.getStatus(loc);
   }
 
   // --- Start Full Research: All Companies dynamically discovered ---
   public async startFullResearch(
     mode: ResearchMode = 'FAST',
     concurrency: number = 10,
-    forceRefresh = false
+    forceRefresh = false,
+    location?: LocationScope | string
   ) {
     if (this.status === 'RUNNING') {
       throw new Error('Research is already running. Please pause or stop first.');
     }
 
+    const loc = this.normalizeLocation(location);
+    this.locationScope = loc;
     this.mode = mode;
     this.concurrency = Math.max(2, Math.min(25, concurrency));
     this.status = 'RUNNING';
@@ -177,13 +223,10 @@ class ResearchQueueManager {
     this.currentStage = 'DISCOVER_COMPANIES';
     this.broadcast('STAGE_CHANGE', { stage: 'DISCOVER_COMPANIES' });
 
-    // Step 1: Dynamic Discovery Producer
-    const discovered = await crawlBangaloreStartupMap();
-    for (const item of discovered) {
-      store.upsertCompany(item);
-    }
+    // Step 1: Dynamic Discovery Producer for the chosen location
+    await this.discoverForLocation(loc);
 
-    const allCompanies = store.getCompanies();
+    const allCompanies = store.getCompanies({ location: loc });
     const toQueue = forceRefresh
       ? allCompanies
       : allCompanies.filter((c) => c.status !== 'COMPLETED');
@@ -191,15 +234,19 @@ class ResearchQueueManager {
     const finalQueue = toQueue.length > 0 ? toQueue : allCompanies;
     this.queue = finalQueue.map((c) => c.id);
 
+    const sourceMapValue: StartupMapSource = loc === 'HYDERABAD' ? 'HYDERABAD' : 'BANGALORE';
     this.currentRun = store.createResearchRun('FULL_MAP', finalQueue.length);
     this.currentRun.mode = this.mode;
     this.currentRun.concurrency = this.concurrency;
+    this.currentRun.location = loc;
+    this.currentRun.sourceMap = sourceMapValue;
 
+    const mapLabel = loc === 'HYDERABAD' ? 'Hyderabad Startups Map' : loc === 'BOTH' ? 'Bangalore & Hyderabad Maps' : 'Bangalore Startup Map';
     store.addEvent({
       companyId: 'queue',
       companyName: 'Research Queue',
       event: 'FULL_RESEARCH_STARTED',
-      message: `Initiated High-Speed Parallel Research for ${finalQueue.length} companies with ${this.concurrency} concurrent workers in ${this.mode} mode.`,
+      message: `Initiated High-Speed Parallel Research for ${finalQueue.length} ${loc} companies from ${mapLabel} with ${this.concurrency} concurrent workers in ${this.mode} mode.`,
       stage: 'RESEARCH_COMPANY',
       type: 'info',
     });
@@ -210,7 +257,7 @@ class ResearchQueueManager {
     // Step 2: Spawn Parallel Consumer Worker Pool
     this.startWorkerPool();
 
-    return this.getStatus();
+    return this.getStatus(loc);
   }
 
   // --- Pause Research ---
@@ -278,10 +325,11 @@ class ResearchQueueManager {
   }
 
   // --- Retry Failed Companies ---
-  public retryFailed(concurrency = 10) {
-    const failed = store.getCompanies().filter((c) => c.status === 'FAILED');
+  public retryFailed(concurrency = 10, location?: LocationScope | string) {
+    const loc = this.normalizeLocation(location);
+    const failed = store.getCompanies({ location: loc }).filter((c) => c.status === 'FAILED');
     if (failed.length === 0) {
-      return this.getStatus();
+      return this.getStatus(loc);
     }
 
     this.concurrency = Math.min(20, Math.max(2, concurrency));
@@ -291,25 +339,28 @@ class ResearchQueueManager {
     this.completedInRun = 0;
     this.totalDurationsMs = 0;
     this.currentRun = store.createResearchRun('RETRY_FAILED', failed.length);
+    this.currentRun.location = loc;
 
     store.addEvent({
       companyId: 'queue',
       companyName: 'Research Queue',
       event: 'RETRY_FAILED_STARTED',
-      message: `Retrying research for ${failed.length} failed companies with ${this.concurrency} workers.`,
+      message: `Retrying research for ${failed.length} failed ${loc} companies with ${this.concurrency} workers.`,
       type: 'info',
     });
 
     this.startWorkerPool();
-    return this.getStatus();
+    return this.getStatus(loc);
   }
 
   // --- Start Incremental Research: Only uncompleted, stale, or changed companies ---
-  public async startIncrementalResearch(mode: ResearchMode = 'FAST', concurrency: number = 10) {
+  public async startIncrementalResearch(mode: ResearchMode = 'FAST', concurrency: number = 10, location?: LocationScope | string) {
     if (this.status === 'RUNNING') {
       throw new Error('Research is already running. Please pause or stop first.');
     }
 
+    const loc = this.normalizeLocation(location);
+    this.locationScope = loc;
     this.mode = mode;
     this.concurrency = Math.max(2, Math.min(25, concurrency));
     this.status = 'RUNNING';
@@ -321,7 +372,7 @@ class ResearchQueueManager {
     this.rateLimitedCount = 0;
     this.abortController = new AbortController();
 
-    const allCompanies = store.getCompanies();
+    const allCompanies = store.getCompanies({ location: loc });
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
     // Filter to companies that need research: not completed, failed, or researched > 7 days ago
@@ -338,12 +389,13 @@ class ResearchQueueManager {
     this.currentRun = store.createResearchRun('CUSTOM_SELECTION', finalQueue.length);
     this.currentRun.mode = this.mode;
     this.currentRun.concurrency = this.concurrency;
+    this.currentRun.location = loc;
 
     store.addEvent({
       companyId: 'queue',
       companyName: 'Research Queue',
       event: 'INCREMENTAL_RESEARCH_STARTED',
-      message: `Started Incremental Research for ${finalQueue.length} startups requiring updates (${this.concurrency} workers, ${this.mode} mode).`,
+      message: `Started Incremental Research for ${finalQueue.length} ${loc} startups requiring updates (${this.concurrency} workers, ${this.mode} mode).`,
       stage: 'RESEARCH_COMPANY',
       type: 'info',
     });
@@ -352,15 +404,17 @@ class ResearchQueueManager {
     this.broadcast('STAGE_CHANGE', { stage: 'RESEARCH_COMPANY' });
     this.startWorkerPool();
 
-    return this.getStatus();
+    return this.getStatus(loc);
   }
 
   // --- Start Research for New Companies Only ---
-  public async startNewCompaniesResearch(mode: ResearchMode = 'FAST', concurrency: number = 10) {
+  public async startNewCompaniesResearch(mode: ResearchMode = 'FAST', concurrency: number = 10, location?: LocationScope | string) {
     if (this.status === 'RUNNING') {
       throw new Error('Research is already running. Please pause or stop first.');
     }
 
+    const loc = this.normalizeLocation(location);
+    this.locationScope = loc;
     this.mode = mode;
     this.concurrency = Math.max(2, Math.min(25, concurrency));
     this.status = 'RUNNING';
@@ -376,13 +430,10 @@ class ResearchQueueManager {
     this.broadcast('STAGE_CHANGE', { stage: 'DISCOVER_COMPANIES' });
 
     // Step 1: Discover from Map
-    const discovered = await crawlBangaloreStartupMap();
-    for (const item of discovered) {
-      store.upsertCompany(item);
-    }
+    await this.discoverForLocation(loc);
 
-    const allCompanies = store.getCompanies();
-    const newOnly = allCompanies.filter((c) => !c.lastResearchedAt || c.status === 'PENDING' || c.status === 'DISCOVERING');
+    const allCompanies = store.getCompanies({ location: loc });
+    const newOnly = allCompanies.filter((c) => !c.lastResearchedAt || c.status === 'PENDING' || c.status === 'DISCOVERED' || c.status === 'QUEUED');
 
     const finalQueue = newOnly.length > 0 ? newOnly : allCompanies.slice(0, 10);
     this.queue = finalQueue.map((c) => c.id);
@@ -390,12 +441,13 @@ class ResearchQueueManager {
     this.currentRun = store.createResearchRun('CUSTOM_SELECTION', finalQueue.length);
     this.currentRun.mode = this.mode;
     this.currentRun.concurrency = this.concurrency;
+    this.currentRun.location = loc;
 
     store.addEvent({
       companyId: 'queue',
       companyName: 'Research Queue',
       event: 'NEW_COMPANIES_RESEARCH_STARTED',
-      message: `Started Research for ${finalQueue.length} newly discovered startups (${this.concurrency} workers, ${this.mode} mode).`,
+      message: `Started Research for ${finalQueue.length} newly discovered ${loc} startups (${this.concurrency} workers, ${this.mode} mode).`,
       stage: 'RESEARCH_COMPANY',
       type: 'info',
     });
@@ -404,12 +456,12 @@ class ResearchQueueManager {
     this.broadcast('STAGE_CHANGE', { stage: 'RESEARCH_COMPANY' });
     this.startWorkerPool();
 
-    return this.getStatus();
+    return this.getStatus(loc);
   }
 
   // --- Start Failed-Only Research ---
-  public startFailedOnlyResearch(concurrency = 10) {
-    return this.retryFailed(concurrency);
+  public startFailedOnlyResearch(concurrency = 10, location?: LocationScope | string) {
+    return this.retryFailed(concurrency, location);
   }
 
   // --- Research Single Company on Demand ---

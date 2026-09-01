@@ -15,17 +15,19 @@ import {
   Copy,
   Check,
 } from 'lucide-react';
-import { OpenApplication, Company } from '../types';
+import { OpenApplication, Company, LocationScope } from '../types';
 import { api } from '../services/api';
 
 interface OpenApplicationsPageProps {
   onSelectCompany?: (companyId: string) => void;
   onNavigateToPipeline?: () => void;
+  selectedLocation?: LocationScope;
 }
 
 export const OpenApplicationsPage: React.FC<OpenApplicationsPageProps> = ({
   onSelectCompany,
   onNavigateToPipeline,
+  selectedLocation = 'BANGALORE',
 }) => {
   const [openApps, setOpenApps] = useState<OpenApplication[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -42,6 +44,7 @@ export const OpenApplicationsPage: React.FC<OpenApplicationsPageProps> = ({
       const data = await api.getOpenApplications({
         search,
         onlyWithEmail,
+        location: selectedLocation,
       });
       setOpenApps(Array.isArray(data) ? data : []);
     } catch (err) {
@@ -54,7 +57,7 @@ export const OpenApplicationsPage: React.FC<OpenApplicationsPageProps> = ({
 
   useEffect(() => {
     fetchOpenApplications();
-  }, [search, onlyWithEmail]);
+  }, [search, onlyWithEmail, selectedLocation]);
 
   const handleCopyEmail = (email: string) => {
     navigator.clipboard.writeText(email);

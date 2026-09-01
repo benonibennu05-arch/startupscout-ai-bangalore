@@ -10,15 +10,20 @@ import {
   Mail,
   RefreshCw,
   Filter,
+  MapPin,
 } from 'lucide-react';
-import { Company } from '../types';
+import { Company, LocationScope } from '../types';
 import { api } from '../services/api';
 
 interface CompaniesPageProps {
   onSelectCompany: (id: string) => void;
+  selectedLocation?: LocationScope;
 }
 
-export const CompaniesPage: React.FC<CompaniesPageProps> = ({ onSelectCompany }) => {
+export const CompaniesPage: React.FC<CompaniesPageProps> = ({
+  onSelectCompany,
+  selectedLocation = 'BANGALORE',
+}) => {
   const [companies, setCompanies] = useState<
     (Company & { jobsCount: number; internshipsCount: number; contactsCount: number; primaryEmail: string | null })[]
   >([]);
@@ -37,6 +42,7 @@ export const CompaniesPage: React.FC<CompaniesPageProps> = ({ onSelectCompany })
         status: statusFilter !== 'ALL' ? statusFilter : undefined,
         hasJobs: hasJobsFilter || undefined,
         hasEmail: hasEmailFilter || undefined,
+        location: selectedLocation,
         sort,
       });
       setCompanies(res.companies || []);
@@ -49,18 +55,38 @@ export const CompaniesPage: React.FC<CompaniesPageProps> = ({ onSelectCompany })
 
   useEffect(() => {
     fetchCompanies();
-  }, [search, statusFilter, hasJobsFilter, hasEmailFilter, sort]);
+  }, [search, statusFilter, hasJobsFilter, hasEmailFilter, sort, selectedLocation]);
+
+  const locationTitle =
+    selectedLocation === 'BOTH'
+      ? 'Bangalore & Hyderabad Startup Directory'
+      : selectedLocation === 'HYDERABAD'
+      ? 'Hyderabad Startup Directory'
+      : 'Bangalore Startup Directory';
+
+  const sourceSubtitle =
+    selectedLocation === 'BOTH'
+      ? 'Discovered from bangalorestartupmap.com and hyderabadstartupsmap.lol'
+      : selectedLocation === 'HYDERABAD'
+      ? 'Discovered from hyderabadstartupsmap.lol with official domains, careers, and contacts'
+      : 'Discovered from bangalorestartupmap.com with official domains, careers, and contacts';
 
   return (
     <div id="companies-page" className="space-y-5">
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-5 rounded-xl border border-gray-200 shadow-xs">
         <div>
-          <h2 className="text-base font-bold text-gray-900">
-            Bangalore Startup Directory ({companies.length})
-          </h2>
-          <p className="text-xs text-gray-500 font-medium">
-            Discovered from Bangalore Startup Map with official domains, careers, and contacts
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-bold text-gray-900">
+              {locationTitle} ({companies.length})
+            </h2>
+            <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-800 flex items-center gap-1">
+              <MapPin className="w-3 h-3 text-blue-600" />
+              {selectedLocation}
+            </span>
+          </div>
+          <p className="text-xs text-gray-500 font-medium mt-0.5">
+            {sourceSubtitle}
           </p>
         </div>
       </div>
@@ -131,7 +157,7 @@ export const CompaniesPage: React.FC<CompaniesPageProps> = ({ onSelectCompany })
           </div>
         ) : companies.length === 0 ? (
           <div className="py-16 text-center text-xs text-gray-500">
-            No companies matching your criteria. Try adjusting filters or starting research.
+            No companies matching your criteria for {selectedLocation}. Try adjusting filters or starting research.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -139,6 +165,7 @@ export const CompaniesPage: React.FC<CompaniesPageProps> = ({ onSelectCompany })
               <thead className="bg-gray-50 border-b border-gray-200 text-gray-500 font-semibold uppercase tracking-wider text-[11px]">
                 <tr>
                   <th className="py-3 px-4">Company</th>
+                  <th className="py-3 px-4">Hub / Source</th>
                   <th className="py-3 px-4">Sector & Tags</th>
                   <th className="py-3 px-4">Official Website</th>
                   <th className="py-3 px-4 text-center">Jobs</th>
@@ -157,16 +184,30 @@ export const CompaniesPage: React.FC<CompaniesPageProps> = ({ onSelectCompany })
                   >
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-lg bg-blue-600 text-white font-bold flex items-center justify-center text-xs shrink-0">
+                        <div className={`w-8 h-8 rounded-lg text-white font-bold flex items-center justify-center text-xs shrink-0 ${
+                          (c as any).sourceMap === 'HYDERABAD' || c.location?.toLowerCase().includes('hyderabad')
+                            ? 'bg-indigo-600'
+                            : 'bg-blue-600'
+                        }`}>
                           {c.name.charAt(0)}
                         </div>
                         <div>
                           <div className="font-bold text-gray-900">{c.name}</div>
                           <div className="text-[11px] text-gray-500 font-medium">
-                            {c.location || 'Bangalore, India'}
+                            {c.location || 'India'}
                           </div>
                         </div>
                       </div>
+                    </td>
+
+                    <td className="py-3 px-4">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        (c as any).sourceMap === 'HYDERABAD' || c.location?.toLowerCase().includes('hyderabad')
+                          ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                          : 'bg-blue-50 text-blue-700 border border-blue-200'
+                      }`}>
+                        {(c as any).sourceMap === 'HYDERABAD' || c.location?.toLowerCase().includes('hyderabad') ? 'Hyderabad' : 'Bangalore'}
+                      </span>
                     </td>
 
                     <td className="py-3 px-4">
@@ -260,3 +301,4 @@ export const CompaniesPage: React.FC<CompaniesPageProps> = ({ onSelectCompany })
     </div>
   );
 };
+

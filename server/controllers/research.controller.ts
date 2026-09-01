@@ -1,18 +1,24 @@
 import { Request, Response } from 'express';
 import { researchQueue } from '../queue/researchQueue.ts';
 import { store } from '../database/store.ts';
-import { ResearchMode } from '../types.ts';
+import { ResearchMode, LocationScope } from '../types.ts';
 
 export class ResearchController {
   public getStatus(req: Request, res: Response) {
+    const location = (req.query.location as LocationScope) || undefined;
     res.json({
       success: true,
-      ...researchQueue.getStatus(),
+      ...researchQueue.getStatus(location),
     });
   }
 
   public getRuns(req: Request, res: Response) {
-    const runs = store.getResearchRuns();
+    const location = (req.query.location as string) || undefined;
+    let runs = store.getResearchRuns();
+    if (location && location.toUpperCase() !== 'BOTH' && location.toUpperCase() !== 'ALL') {
+      const locUpper = location.toUpperCase();
+      runs = runs.filter((r) => !r.location || r.location.toUpperCase() === locUpper || r.location === 'BOTH');
+    }
     res.json({
       success: true,
       count: runs.length,
@@ -33,10 +39,11 @@ export class ResearchController {
     try {
       const mode = (req.body?.mode as ResearchMode) || 'FAST';
       const concurrency = req.body?.concurrency ? Number(req.body.concurrency) : 10;
-      const status = await researchQueue.startTest10(mode, concurrency);
+      const location = (req.body?.location as LocationScope) || 'BANGALORE';
+      const status = await researchQueue.startTest10(mode, concurrency, location);
       res.json({
         success: true,
-        message: `10-Company Parallel Test Batch started (${concurrency} workers, ${mode} mode).`,
+        message: `10-Company Parallel Test Batch started for ${location} (${concurrency} workers, ${mode} mode).`,
         status,
       });
     } catch (err: any) {
@@ -49,10 +56,12 @@ export class ResearchController {
       const mode = (req.body?.mode as ResearchMode) || 'FAST';
       const concurrency = req.body?.concurrency ? Number(req.body.concurrency) : 10;
       const forceRefresh = Boolean(req.body?.forceRefresh);
-      const status = await researchQueue.startFullResearch(mode, concurrency, forceRefresh);
+      const location = (req.body?.location as LocationScope) || 'BANGALORE';
+      const status = await researchQueue.startFullResearch(mode, concurrency, forceRefresh, location);
+      const mapName = location === 'HYDERABAD' ? 'Hyderabad Startups Map' : location === 'BOTH' ? 'Bangalore & Hyderabad Maps' : 'Bangalore Startup Map';
       res.json({
         success: true,
-        message: `Full Bangalore Startup Map parallel research started (${concurrency} workers, ${mode} mode).`,
+        message: `Full ${mapName} parallel research started (${concurrency} workers, ${mode} mode).`,
         status,
       });
     } catch (err: any) {
@@ -89,10 +98,11 @@ export class ResearchController {
 
   public retryFailed(req: Request, res: Response) {
     const concurrency = req.body?.concurrency ? Number(req.body.concurrency) : 10;
-    const status = researchQueue.retryFailed(concurrency);
+    const location = (req.body?.location as LocationScope) || undefined;
+    const status = researchQueue.retryFailed(concurrency, location);
     res.json({
       success: true,
-      message: 'Retrying failed companies with parallel workers.',
+      message: `Retrying failed companies with parallel workers${location ? ` (${location})` : ''}.`,
       status,
     });
   }
@@ -101,10 +111,11 @@ export class ResearchController {
     try {
       const mode = (req.body?.mode as ResearchMode) || 'FAST';
       const concurrency = req.body?.concurrency ? Number(req.body.concurrency) : 10;
-      const status = await researchQueue.startIncrementalResearch(mode, concurrency);
+      const location = (req.body?.location as LocationScope) || 'BANGALORE';
+      const status = await researchQueue.startIncrementalResearch(mode, concurrency, location);
       res.json({
         success: true,
-        message: `Incremental update research started (${concurrency} workers, ${mode} mode).`,
+        message: `Incremental update research started for ${location} (${concurrency} workers, ${mode} mode).`,
         status,
       });
     } catch (err: any) {
@@ -116,10 +127,11 @@ export class ResearchController {
     try {
       const mode = (req.body?.mode as ResearchMode) || 'FAST';
       const concurrency = req.body?.concurrency ? Number(req.body.concurrency) : 10;
-      const status = await researchQueue.startNewCompaniesResearch(mode, concurrency);
+      const location = (req.body?.location as LocationScope) || 'BANGALORE';
+      const status = await researchQueue.startNewCompaniesResearch(mode, concurrency, location);
       res.json({
         success: true,
-        message: `New companies research started (${concurrency} workers, ${mode} mode).`,
+        message: `New companies research started for ${location} (${concurrency} workers, ${mode} mode).`,
         status,
       });
     } catch (err: any) {
@@ -160,6 +172,15 @@ export class ResearchController {
     }
     researchQueue.setMode(mode);
     res.json({ success: true, status: researchQueue.getStatus() });
+  }
+
+  public setLocation(req: Request, res: Response) {
+    const location = req.body?.location as LocationScope;
+    if (!['BANGALORE', 'HYDERABAD', 'BOTH'].includes(location)) {
+      return res.status(400).json({ success: false, error: 'Invalid location. Must be BANGALORE, HYDERABAD, or BOTH' });
+    }
+    researchQueue.setLocationScope(location);
+    res.json({ success: true, status: researchQueue.getStatus(location) });
   }
 
   public getEvents(req: Request, res: Response) {

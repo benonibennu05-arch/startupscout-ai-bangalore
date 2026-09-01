@@ -18,14 +18,18 @@ export interface ExtractedEmail {
   profileUrl?: string | null;
 }
 
-const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi;
+const EMAIL_REGEX = /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/gi;
 // Pattern for obfuscated emails: name [at] domain.com, name(at)domain.com, name @ domain.com
 const OBFUSCATED_EMAIL_REGEX = /([a-zA-Z0-9._%+-]+)\s*(?:\[at\]|\(at\)|\bat\b|@)\s*([a-zA-Z0-9.-]+)\s*(?:\[dot\]|\(dot\)|\bdot\b|\.)\s*([a-zA-Z]{2,})/gi;
 
 const IGNORED_DOMAINS = new Set([
+  'all.it',
   'sentry.io',
   'wixpress.com',
+  'wix.com',
   'example.com',
+  'example.org',
+  'example.net',
   'domain.com',
   'email.com',
   'github.com',
@@ -45,6 +49,90 @@ const IGNORED_DOMAINS = new Set([
   'gstatic.com',
   'apple.com',
   'microsoft.com',
+  'jsdelivr.net',
+  'unpkg.com',
+  'webpack.js.org',
+  'npmjs.com',
+  'vercel.app',
+  'netlify.app',
+  'doubleclick.net',
+  'googletagmanager.com',
+  'google-analytics.com',
+  'intercom.io',
+  'hotjar.com',
+  'datadoghq.com',
+  'segment.io',
+  'segment.com',
+  'mixpanel.com',
+  'optimizely.com',
+  'stripe.com',
+  'braintreegateway.com',
+  'paypal.com',
+]);
+
+const IGNORED_USERNAMES = new Set([
+  'error',
+  'errors',
+  'err',
+  'exception',
+  'null',
+  'undefined',
+  'nan',
+  'false',
+  'true',
+  'object',
+  'function',
+  'void',
+  'return',
+  'yield',
+  'import',
+  'export',
+  'default',
+  'webpack',
+  'chunk',
+  'bundle',
+  'polyfill',
+  'runtime',
+  'node_modules',
+  'babel',
+  'lodash',
+  'react',
+  'vue',
+  'angular',
+  'npm',
+  'package',
+  'build',
+  'dist',
+  'sourcemap',
+  'sentry',
+  'datadog',
+  'user',
+  'username',
+  'name',
+  'yourname',
+  'your-name',
+  'your_name',
+  'firstname',
+  'lastname',
+  'test',
+  'testing',
+  'sample',
+  'demo',
+  'example',
+  'someone',
+  'nobody',
+  'dummy',
+  'placeholder',
+  'email',
+  'mail',
+  'myemail',
+  'your-email',
+  'youremail',
+  'your_email',
+  'first.last',
+  'john.doe',
+  'jane.doe',
+  'admin_example',
 ]);
 
 const GENERIC_PUBLIC_PROVIDERS = new Set([
@@ -71,6 +159,25 @@ const IGNORED_EXTENSIONS = [
   '.woff',
   '.woff2',
   '.ttf',
+  '.eot',
+  '.map',
+  '.ts',
+  '.tsx',
+  '.jsx',
+  '.json',
+  '.vue',
+  '.wasm',
+  '.min',
+  '.mjs',
+  '.cjs',
+  '.md',
+  '.txt',
+  '.pdf',
+  '.zip',
+  '.tar',
+  '.gz',
+  '.mp4',
+  '.mp3',
 ];
 
 /**
@@ -79,17 +186,37 @@ const IGNORED_EXTENSIONS = [
 export function isValidEmail(email: string): boolean {
   if (!email || typeof email !== 'string') return false;
   const clean = email.trim().toLowerCase();
-  if (clean.length < 5 || clean.length > 90) return false;
+  if (clean.length < 6 || clean.length > 90) return false;
   if (!/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(clean)) return false;
+
+  // Prevent double dots or starting/ending with dots or hyphens
+  if (clean.includes('..') || clean.includes('.@') || clean.includes('@.')) return false;
 
   for (const ext of IGNORED_EXTENSIONS) {
     if (clean.endsWith(ext)) return false;
   }
 
-  const domain = clean.split('@')[1];
-  if (!domain || IGNORED_DOMAINS.has(domain)) return false;
+  const parts = clean.split('@');
+  if (parts.length !== 2) return false;
 
-  // Ignore dummy placeholder emails
+  const [username, domain] = parts;
+  if (!username || !domain) return false;
+
+  // Check username constraints
+  if (username.length < 2 || username.length > 50) return false;
+  if (username.startsWith('.') || username.endsWith('.') || username.startsWith('-') || username.endsWith('-')) return false;
+  if (IGNORED_USERNAMES.has(username)) return false;
+
+  // Check domain constraints
+  if (!domain.includes('.') || domain.startsWith('.') || domain.endsWith('.')) return false;
+  if (IGNORED_DOMAINS.has(domain)) return false;
+
+  // Ensure TLD is at least 2 chars and letters only
+  const domainParts = domain.split('.');
+  const tld = domainParts[domainParts.length - 1];
+  if (!tld || tld.length < 2 || !/^[a-zA-Z]+$/.test(tld)) return false;
+
+  // Check for common dummy placeholder occurrences
   if (
     clean.includes('user@') ||
     clean.includes('test@') ||
@@ -97,7 +224,10 @@ export function isValidEmail(email: string): boolean {
     clean.includes('name@') ||
     clean.includes('someone@') ||
     clean.includes('sample@') ||
-    clean.includes('demo@')
+    clean.includes('demo@') ||
+    clean.includes('placeholder@') ||
+    clean.includes('example@') ||
+    clean.includes('error@')
   ) {
     return false;
   }
@@ -111,6 +241,7 @@ export function isValidEmail(email: string): boolean {
  */
 export function verifyExactMatchInSource(email: string, sourceContent: string): boolean {
   if (!email || !sourceContent) return false;
+  if (!isValidEmail(email)) return false;
   const cleanEmail = email.trim().toLowerCase();
   const lowerSource = sourceContent.toLowerCase();
 
@@ -130,7 +261,8 @@ export function verifyExactMatchInSource(email: string, sourceContent: string): 
       lowerSource.includes(`${user} [at] ${domain}`) ||
       lowerSource.includes(`${user}(at)${domain}`) ||
       lowerSource.includes(`${user} at ${domain}`) ||
-      lowerSource.includes(`${user} [at] ${domainPrefix}`)
+      lowerSource.includes(`${user} [at] ${domainPrefix}`) ||
+      lowerSource.includes(`${user} (at) ${domainPrefix}`)
     ) {
       return true;
     }
@@ -313,7 +445,10 @@ export function extractPublicEmailsFromHtml(
 
   const $ = cheerio.load(html);
   const pageTitle = $('title').text().trim() || null;
-  const pageText = $('body').text() || '';
+
+  // Clone and strip non-human content elements to prevent minified JS/CSS syntax from matching email regex
+  $('script, style, noscript, svg, iframe, template, link, meta, object, embed, code, pre').remove();
+  const pageText = $('body').text() || $.text() || '';
   const results = new Map<string, ExtractedEmail>();
 
   // Determine default source type from URL or parameter

@@ -15,13 +15,17 @@ import {
   Cpu,
   Layers,
   Users,
+  MapPin,
+  Globe,
+  ExternalLink,
 } from 'lucide-react';
 import { QueueStatusResponse } from '../services/api';
-import { ResearchEvent } from '../types';
+import { ResearchEvent, LocationScope } from '../types';
 
 interface ResearchLiveCardProps {
   queueStatus: QueueStatusResponse | null;
   events: ResearchEvent[];
+  selectedLocation?: LocationScope;
   onPause: () => void;
   onResume: () => void;
   onStop: () => void;
@@ -31,6 +35,7 @@ interface ResearchLiveCardProps {
 export const ResearchLiveCard: React.FC<ResearchLiveCardProps> = ({
   queueStatus,
   events,
+  selectedLocation = 'BANGALORE',
   onPause,
   onResume,
   onStop,
@@ -46,6 +51,13 @@ export const ResearchLiveCard: React.FC<ResearchLiveCardProps> = ({
   const total = currentRun?.totalCompanies || stats?.totalCompanies || 0;
   const completed = currentRun?.completedCompanies || stats?.researchedCompanies || 0;
   const progressPercent = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+
+  const currentSourceUrl =
+    selectedLocation === 'HYDERABAD'
+      ? 'https://www.hyderabadstartupsmap.lol/'
+      : selectedLocation === 'BOTH'
+      ? 'https://www.bangalorestartupmap.com/ + https://www.hyderabadstartupsmap.lol/'
+      : 'https://www.bangalorestartupmap.com/';
 
   return (
     <div
@@ -84,19 +96,29 @@ export const ResearchLiveCard: React.FC<ResearchLiveCardProps> = ({
                 <Zap className="w-3 h-3 text-amber-500" />
                 {queueStatus?.concurrency || 10} Workers ({queueStatus?.mode || 'FAST'})
               </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                <MapPin className="w-3 h-3 text-blue-600" />
+                {selectedLocation === 'BOTH' ? 'Both Hubs' : selectedLocation === 'HYDERABAD' ? 'Hyderabad' : 'Bangalore'}
+              </span>
             </div>
 
-            {isRunning && (
-              <p className="text-xs text-gray-600 mt-1 flex items-center gap-2 flex-wrap">
-                <span>
-                  Active Workers: <strong className="text-blue-700 font-bold">{activeWorkers.length}</strong> / {queueStatus?.concurrency || 10}
+            <div className="text-xs text-gray-600 mt-1 flex items-center gap-2 flex-wrap">
+              {isRunning ? (
+                <>
+                  <span>
+                    Active Workers: <strong className="text-blue-700 font-bold">{activeWorkers.length}</strong> / {queueStatus?.concurrency || 10}
+                  </span>
+                  <span className="text-gray-300">•</span>
+                  <span>
+                    Queued: <strong className="text-gray-900 font-semibold">{queueStatus?.queueLength || 0}</strong> companies
+                  </span>
+                </>
+              ) : (
+                <span className="flex items-center gap-1">
+                  Source: <a href={selectedLocation === 'HYDERABAD' ? 'https://www.hyderabadstartupsmap.lol/' : 'https://www.bangalorestartupmap.com/'} target="_blank" rel="noreferrer noopener" className="text-blue-600 hover:underline font-medium flex items-center gap-0.5">{currentSourceUrl} <ExternalLink className="w-2.5 h-2.5" /></a>
                 </span>
-                <span className="text-gray-300">•</span>
-                <span>
-                  Queued: <strong className="text-gray-900 font-semibold">{queueStatus?.queueLength || 0}</strong> companies
-                </span>
-              </p>
-            )}
+              )}
+            </div>
           </div>
         </div>
 

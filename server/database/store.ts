@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import {
   Company,
+  CompanySource,
+  StartupMapSource,
   Opportunity,
   Contact,
   ResearchRun,
@@ -25,6 +27,12 @@ import {
   OutreachType,
   OutreachStats,
   CompanyOutreachState,
+  LocationScope,
+  SourceMapStats,
+  DualSourceStats,
+  ResearchStatsBreakdown,
+  DashboardCompanyStats,
+  GoogleOAuthTokenData,
 } from '../types.ts';
 import { REAL_OPEN_APPLICATIONS_MAP } from '../crawler/openApplicationsMap.ts';
 import { classifyRole, generateJobFingerprint } from '../ai/roleClassifier.ts';
@@ -33,6 +41,70 @@ import {
   getApprovedGeneralInquiryBody,
   APPROVED_CANDIDATE_INFO,
 } from '../templates/approvedEmailTemplate.ts';
+import { isValidEmail } from '../extractors/email.extractor.ts';
+
+export function normalizeCompanyName(name: string): string {
+  if (!name) return '';
+  return name
+    .toLowerCase()
+    .replace(/^(the|a)\s+/i, '')
+    .replace(/\b(pvt|ltd|pvt\s*ltd|private\s*limited|limited|inc|corp|corporation|technologies|tech|labs|software|solutions|services|ai|io)\b/gi, '')
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
+}
+
+export function extractOfficialDomain(url?: string | null): string | null {
+  if (!url) return null;
+  try {
+    const raw = url.trim();
+    const withProto = raw.startsWith('http://') || raw.startsWith('https://') ? raw : `https://${raw}`;
+    const parsed = new URL(withProto);
+    return parsed.hostname.replace(/^www\./i, '').toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+export function matchesLocationScope(
+  locationStr: string | undefined | null,
+  scope?: LocationScope | string | null,
+  company?: Partial<Company> | null
+): boolean {
+  if (!scope || scope === 'ALL' || scope === 'Both' || scope === 'BOTH') return true;
+  const target = String(scope).toUpperCase();
+
+  // If company object is provided, inspect sourceMap, sources, and locations
+  if (company) {
+    if (company.sourceMap === 'BOTH') return true;
+    if (target === 'HYDERABAD') {
+      if (company.sourceMap === 'HYDERABAD' || company.sourceMap === 'HYDERABAD_STARTUP_MAP') return true;
+      if (company.sources?.some((s) => s.sourceMap === 'HYDERABAD' || s.sourceMap === 'HYDERABAD_STARTUP_MAP')) return true;
+      if (company.companySources?.some((s) => s.sourceMap === 'HYDERABAD' || s.sourceMap === 'HYDERABAD_STARTUP_MAP')) return true;
+      if (company.locations?.some((l) => l.toLowerCase().includes('hyderabad') || l.toLowerCase().includes('secunderabad'))) return true;
+    }
+    if (target === 'BANGALORE') {
+      if (company.sourceMap === 'BANGALORE' || company.sourceMap === 'BANGALORE_STARTUP_MAP') return true;
+      if (company.sources?.some((s) => s.sourceMap === 'BANGALORE' || s.sourceMap === 'BANGALORE_STARTUP_MAP')) return true;
+      if (company.companySources?.some((s) => s.sourceMap === 'BANGALORE' || s.sourceMap === 'BANGALORE_STARTUP_MAP')) return true;
+      if (company.locations?.some((l) => l.toLowerCase().includes('bangalore') || l.toLowerCase().includes('bengaluru'))) return true;
+    }
+  }
+
+  const loc = (locationStr || '').toLowerCase();
+  if (target.includes('HYD')) {
+    return loc.includes('hyderabad') || loc.includes('secunderabad') || loc.includes('hitec') || loc.includes('gachibowli');
+  }
+  if (target.includes('BANG') || target.includes('BLR')) {
+    return (
+      loc.includes('bangalore') ||
+      loc.includes('bengaluru') ||
+      loc.includes('koramangala') ||
+      loc.includes('indiranagar') ||
+      (!loc.includes('hyderabad') && !loc.includes('secunderabad'))
+    );
+  }
+  return true;
+}
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'database.json');
@@ -52,6 +124,8 @@ export interface DatabaseSchema {
   notifications: AppNotification[];
   candidate_profile: CandidateProfile;
   email_provider_config: EmailProviderConfig;
+  google_oauth_tokens?: GoogleOAuthTokenData | null;
+  oauth_states?: Record<string, { createdAt: number; redirectUrl?: string }>;
   research_runs: ResearchRun[];
   research_errors: ResearchError[];
   research_events: ResearchEvent[];
@@ -399,6 +473,8 @@ class Store {
           notifications: parsed.notifications || [],
           candidate_profile: { ...DEFAULT_CANDIDATE_PROFILE, ...(parsed.candidate_profile || {}) },
           email_provider_config: { ...DEFAULT_EMAIL_CONFIG, ...(parsed.email_provider_config || {}) },
+          google_oauth_tokens: parsed.google_oauth_tokens || null,
+          oauth_states: parsed.oauth_states || {},
           research_runs: parsed.research_runs || [],
           research_errors: parsed.research_errors || [],
           research_events: parsed.research_events || [],
@@ -457,7 +533,7 @@ class Store {
             };
           }
 
-          const hasValidSyntax = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email);
+          const hasValidSyntax = isValidEmail(email);
           if (!hasValidSyntax) {
             return {
               ...c,
@@ -499,6 +575,47 @@ class Store {
           linkedin: 'https://www.linkedin.com/in/teja-matta-602b3531a/',
           portfolio: 'https://teja-matta-portfolio.vercel.app/',
         };
+
+        // Upgrade and normalize all existing company records with canonical and source metadata
+        this.db.companies = this.db.companies.map((c) => {
+          const normName = c.normalizedName || normalizeCompanyName(c.name);
+          const domain = c.officialDomain || extractOfficialDomain(c.officialWebsite);
+          const isHyd = c.location?.toLowerCase().includes('hyderabad') || c.startupMapUrl?.includes('hyderabad');
+          const defaultSource: StartupMapSource = isHyd ? 'HYDERABAD_STARTUP_MAP' : 'BANGALORE_STARTUP_MAP';
+
+          const sources: CompanySource[] = (c.sources && c.sources.length > 0)
+            ? c.sources
+            : (c.companySources && c.companySources.length > 0)
+            ? c.companySources
+            : [{
+                id: `src_${c.id}`,
+                companyId: c.id,
+                sourceMap: defaultSource,
+                sourceUrl: c.startupMapUrl || (isHyd ? 'https://www.hyderabadstartupsmap.lol' : 'https://www.bangalorestartupmap.com'),
+                sourceCompanyUrl: c.startupMapUrl,
+                discoveredAt: c.createdAt || now,
+              }];
+
+          const locations = (c.locations && c.locations.length > 0)
+            ? c.locations
+            : [c.location || (isHyd ? 'Hyderabad, India' : 'Bangalore, India')];
+
+          return {
+            ...c,
+            canonicalCompanyId: c.canonicalCompanyId || c.id,
+            canonicalName: c.canonicalName || c.name,
+            normalizedName: normName,
+            officialDomain: domain || undefined,
+            sourceMap: c.sourceMap || (isHyd ? 'HYDERABAD' : 'BANGALORE'),
+            sourceMapUrl: c.sourceMapUrl || c.startupMapUrl,
+            sourceCompanyUrl: c.sourceCompanyUrl || c.startupMapUrl,
+            sources,
+            companySources: sources,
+            locations,
+            discoveredAt: c.discoveredAt || c.createdAt || now,
+            researchStatus: c.researchStatus || c.status || 'PENDING',
+          };
+        });
 
         // Guarantee outreach records for general inquiries use the exact approved template
         if (this.db.outreach_records && this.db.outreach_records.length > 0) {
@@ -612,43 +729,174 @@ class Store {
   }
 
   // --- Companies ---
-  public getCompanies(): Company[] {
-    return this.db.companies;
+  public getCompanies(filter?: {
+    status?: string;
+    search?: string;
+    location?: LocationScope | string;
+    sector?: string;
+    stage?: string;
+  }): Company[] {
+    let list = this.db.companies;
+    if (filter?.location) {
+      list = list.filter((c) => matchesLocationScope(c.location, filter.location, c));
+    }
+    if (filter?.status && filter.status !== 'ALL') {
+      list = list.filter((c) => c.status === filter.status);
+    }
+    if (filter?.sector && filter.sector !== 'ALL') {
+      const s = filter.sector.toLowerCase();
+      list = list.filter(
+        (c) =>
+          (c.sector && c.sector.toLowerCase().includes(s)) ||
+          (c.category && c.category.toLowerCase().includes(s)) ||
+          (c.tags && c.tags.some((t) => t.toLowerCase().includes(s)))
+      );
+    }
+    if (filter?.stage && filter.stage !== 'ALL') {
+      const st = filter.stage.toLowerCase();
+      list = list.filter((c) => c.startupStage && c.startupStage.toLowerCase().includes(st));
+    }
+    if (filter?.search) {
+      const q = filter.search.toLowerCase();
+      list = list.filter(
+        (c) =>
+          c.name.toLowerCase().includes(q) ||
+          (c.sector && c.sector.toLowerCase().includes(q)) ||
+          (c.category && c.category.toLowerCase().includes(q)) ||
+          (c.tags && c.tags.some((t) => t.toLowerCase().includes(q)))
+      );
+    }
+    return list;
   }
 
   public getCompany(id: string): Company | undefined {
-    return this.db.companies.find((c) => c.id === id);
+    return this.db.companies.find((c) => c.id === id || c.canonicalCompanyId === id);
   }
 
   public getCompanyByName(name: string): Company | undefined {
     const clean = name.trim().toLowerCase();
-    return this.db.companies.find((c) => c.name.trim().toLowerCase() === clean);
+    const norm = normalizeCompanyName(name);
+    return this.db.companies.find((c) => {
+      if (c.name.trim().toLowerCase() === clean) return true;
+      if (norm.length > 2 && (c.normalizedName === norm || normalizeCompanyName(c.name) === norm)) return true;
+      return false;
+    });
   }
 
   public getCompanyByStartupMapUrl(url: string): Company | undefined {
     const clean = url.trim().toLowerCase().replace(/\/$/, '');
     return this.db.companies.find(
-      (c) => c.startupMapUrl.trim().toLowerCase().replace(/\/$/, '') === clean
+      (c) =>
+        c.startupMapUrl?.trim().toLowerCase().replace(/\/$/, '') === clean ||
+        c.sourceMapUrl?.trim().toLowerCase().replace(/\/$/, '') === clean ||
+        c.sources?.some((s) => s.sourceUrl.trim().toLowerCase().replace(/\/$/, '') === clean) ||
+        c.companySources?.some((s) => s.sourceUrl.trim().toLowerCase().replace(/\/$/, '') === clean)
     );
   }
 
-  public upsertCompany(data: Partial<Company> & { name: string }): Company {
+  public upsertCompany(data: Partial<Company> & { name: string; sourceMap?: StartupMapSource; startupMapUrl?: string }): Company {
     const now = new Date().toISOString();
+    const normName = normalizeCompanyName(data.name);
+    const domain = extractOfficialDomain(data.officialWebsite);
+
+    // Look for existing by ID, startupMapUrl, domain, or normalized name
     let existing = data.id
       ? this.getCompany(data.id)
-      : (data.startupMapUrl ? this.getCompanyByStartupMapUrl(data.startupMapUrl) : undefined) ||
-        this.getCompanyByName(data.name);
+      : (data.startupMapUrl ? this.getCompanyByStartupMapUrl(data.startupMapUrl) : undefined);
+
+    if (!existing && domain) {
+      existing = this.db.companies.find((c) => c.officialDomain === domain || extractOfficialDomain(c.officialWebsite) === domain);
+    }
+
+    if (!existing && normName.length > 2) {
+      existing = this.db.companies.find((c) => {
+        const cNorm = c.normalizedName || normalizeCompanyName(c.name);
+        return cNorm === normName;
+      });
+    }
+
+    const requestedSourceMap: StartupMapSource = data.sourceMap ||
+      (data.location?.toLowerCase().includes('hyderabad') || data.startupMapUrl?.includes('hyderabad')
+        ? 'HYDERABAD_STARTUP_MAP'
+        : 'BANGALORE_STARTUP_MAP');
+
+    const sourceRecord: CompanySource = {
+      id: `src_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      companyId: existing ? existing.id : (data.id || `comp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`),
+      sourceMap: requestedSourceMap,
+      sourceUrl: data.startupMapUrl || data.sourceMapUrl || (requestedSourceMap.includes('HYD') ? 'https://www.hyderabadstartupsmap.lol' : 'https://www.bangalorestartupmap.com'),
+      sourceCompanyUrl: data.sourceCompanyUrl || data.startupMapUrl,
+      discoveredAt: data.discoveredAt || now,
+    };
 
     if (existing) {
-      Object.assign(existing, data, { updatedAt: now });
+      // Retain existing sources and add new source if not already tracked
+      const currentSources: CompanySource[] = existing.sources || existing.companySources || [];
+      const hasSource = currentSources.some(
+        (s) => s.sourceMap === requestedSourceMap || (s.sourceUrl && data.startupMapUrl && s.sourceUrl === data.startupMapUrl)
+      );
+      if (!hasSource) {
+        currentSources.push(sourceRecord);
+      }
+      existing.sources = currentSources;
+      existing.companySources = currentSources;
+
+      // Update locations
+      const locList = new Set(existing.locations || [existing.location]);
+      if (data.location) locList.add(data.location);
+      existing.locations = Array.from(locList);
+
+      const hasBlr = currentSources.some((s) => s.sourceMap.includes('BANGALORE')) || existing.locations.some((l) => l.toLowerCase().includes('bangalore') || l.toLowerCase().includes('bengaluru'));
+      const hasHyd = currentSources.some((s) => s.sourceMap.includes('HYDERABAD')) || existing.locations.some((l) => l.toLowerCase().includes('hyderabad'));
+
+      if (hasBlr && hasHyd) {
+        existing.sourceMap = 'BOTH';
+        existing.location = 'Bangalore & Hyderabad, India';
+      } else if (hasHyd) {
+        existing.sourceMap = 'HYDERABAD_STARTUP_MAP';
+      } else {
+        existing.sourceMap = 'BANGALORE_STARTUP_MAP';
+      }
+
+      existing.canonicalCompanyId = existing.canonicalCompanyId || existing.id;
+      existing.canonicalName = existing.canonicalName || existing.name;
+      existing.normalizedName = existing.normalizedName || normName;
+      if (domain && !existing.officialDomain) existing.officialDomain = domain;
+      if (data.officialWebsite && !existing.officialWebsite) existing.officialWebsite = data.officialWebsite;
+      if (data.description && !existing.description) existing.description = data.description;
+      if (data.careersUrl && !existing.careersUrl) existing.careersUrl = data.careersUrl;
+      if (data.jobBoardUrl && !existing.jobBoardUrl) existing.jobBoardUrl = data.jobBoardUrl;
+      if (data.linkedinUrl && !existing.linkedinUrl) existing.linkedinUrl = data.linkedinUrl;
+      if (data.tags && data.tags.length > 0) {
+        const tagSet = new Set([...existing.tags, ...data.tags]);
+        existing.tags = Array.from(tagSet);
+      }
+      if (data.status && existing.status !== 'COMPLETED') {
+        existing.status = data.status;
+      }
+      existing.updatedAt = now;
       this.persist();
       return existing;
     }
 
+    const compId = data.id || `comp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    sourceRecord.companyId = compId;
+
     const newCompany: Company = {
-      id: data.id || `comp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      id: compId,
+      canonicalCompanyId: compId,
       name: data.name.trim(),
-      startupMapUrl: data.startupMapUrl || 'https://www.bangalorestartupmap.com',
+      canonicalName: data.canonicalName || data.name.trim(),
+      normalizedName: normName,
+      officialDomain: domain || undefined,
+      startupMapUrl: data.startupMapUrl || sourceRecord.sourceUrl,
+      sourceMapUrl: data.sourceMapUrl || sourceRecord.sourceUrl,
+      sourceCompanyUrl: data.sourceCompanyUrl || data.startupMapUrl,
+      sourceMap: requestedSourceMap,
+      sources: [sourceRecord],
+      companySources: [sourceRecord],
+      location: data.location || (requestedSourceMap.includes('HYD') ? 'Hyderabad, India' : 'Bangalore, India'),
+      locations: data.locations || [data.location || (requestedSourceMap.includes('HYD') ? 'Hyderabad, India' : 'Bangalore, India')],
       officialWebsite: data.officialWebsite || null,
       websiteVerified: data.websiteVerified ?? false,
       websiteSourceUrl: data.websiteSourceUrl || null,
@@ -656,15 +904,17 @@ class Store {
       sector: data.sector || null,
       category: data.category || null,
       tags: data.tags || [],
-      location: data.location || 'Bangalore, India',
       foundedYear: data.foundedYear || null,
       startupStage: data.startupStage || null,
       teamSize: data.teamSize || null,
       linkedinUrl: data.linkedinUrl || null,
       careersUrl: data.careersUrl || null,
       jobBoardUrl: data.jobBoardUrl || null,
+      atsProvider: data.atsProvider || null,
       status: data.status || 'PENDING',
+      researchStatus: data.status || 'PENDING',
       lastResearchedAt: data.lastResearchedAt || null,
+      discoveredAt: data.discoveredAt || now,
       createdAt: now,
       updatedAt: now,
     };
@@ -684,9 +934,12 @@ class Store {
   }
 
   // --- Opportunities ---
-  public getOpportunities(filter?: OpportunityFilter & { sort?: 'relevance' | 'match' | 'newest' | 'company' }): Opportunity[] {
+  public getOpportunities(filter?: OpportunityFilter & { sort?: 'relevance' | 'match' | 'newest' | 'company'; location?: LocationScope | string }): Opportunity[] {
     let list = this.db.opportunities;
 
+    if (filter?.location) {
+      list = list.filter((o) => matchesLocationScope(o.location, filter.location));
+    }
     if (filter?.companyId) {
       list = list.filter((o) => o.companyId === filter.companyId);
     }
@@ -1004,8 +1257,79 @@ class Store {
   }
 
   // --- Contacts ---
-  public getContacts(): Contact[] {
-    return this.db.contacts;
+  public getContacts(filter?: {
+    companyId?: string;
+    search?: string;
+    emailType?: string;
+    verificationStatus?: string;
+    onlyWithEmail?: boolean;
+    location?: LocationScope | string;
+  }): Contact[] {
+    let list = this.db.contacts;
+
+    if (filter?.location) {
+      const validCompanyIds = new Set(
+        this.db.companies
+          .filter((c) => matchesLocationScope(c.location, filter.location))
+          .map((c) => c.id)
+      );
+      list = list.filter((c) => validCompanyIds.has(c.companyId));
+    }
+
+    if (filter?.companyId) {
+      list = list.filter((c) => c.companyId === filter.companyId);
+    }
+    if (filter?.emailType && filter.emailType !== 'ALL') {
+      list = list.filter((c) => c.emailType === filter.emailType);
+    }
+    if (filter?.verificationStatus && filter.verificationStatus !== 'ALL') {
+      list = list.filter((c) => c.verificationStatus === filter.verificationStatus);
+    }
+    if (filter?.onlyWithEmail) {
+      list = list.filter((c) => c.email && c.email.toLowerCase() !== 'not publicly available');
+    }
+    if (filter?.search) {
+      const q = filter.search.toLowerCase();
+      list = list.filter(
+        (c) =>
+          c.companyName.toLowerCase().includes(q) ||
+          (c.name && c.name.toLowerCase().includes(q)) ||
+          (c.email && c.email.toLowerCase().includes(q)) ||
+          (c.role && c.role.toLowerCase().includes(q)) ||
+          (c.domain && c.domain.toLowerCase().includes(q))
+      );
+    }
+
+    return list;
+  }
+
+  public getContactStats(location?: LocationScope | string) {
+    const list = this.getContacts({ location });
+    const verifiedPublic = list.filter(
+      (c) =>
+        c.verificationStatus === 'VERIFIED_PUBLIC' &&
+        c.email &&
+        c.email.toLowerCase() !== 'not publicly available'
+    ).length;
+    const employeeContacts = list.filter((c) => Boolean(c.name && c.name.trim().length > 0)).length;
+    const careers = list.filter(
+      (c) => c.emailType === 'CAREERS' || c.emailType === 'HIRING'
+    ).length;
+    const talent = list.filter((c) => c.emailType === 'TALENT').length;
+    const recruiting = list.filter((c) => c.emailType === 'RECRUITING').length;
+    const hr = list.filter((c) => c.emailType === 'HR').length;
+    const rejected = list.filter((c) => c.verificationStatus === 'REJECTED').length;
+
+    return {
+      total: list.length,
+      verifiedPublic,
+      employeeContacts,
+      careers,
+      talent,
+      recruiting,
+      hr,
+      rejected,
+    };
   }
 
   public getContactsForCompany(companyId: string): Contact[] {
@@ -1028,7 +1352,9 @@ class Store {
       return false;
     });
 
-    const isExact = contact.exactMatch !== undefined ? contact.exactMatch : (cleanEmail !== 'not publicly available');
+    const isNotPublic = !cleanEmail || cleanEmail === 'not publicly available';
+    const isEmailValid = isNotPublic || isValidEmail(cleanEmail);
+    const isExact = (contact.exactMatch !== undefined ? contact.exactMatch : !isNotPublic) && isEmailValid;
     const defaultStatus: Contact['verificationStatus'] = isExact ? 'VERIFIED_PUBLIC' : 'REJECTED';
 
     if (existing) {
@@ -1169,9 +1495,18 @@ class Store {
     status?: string;
     onlyWithEmail?: boolean;
     search?: string;
+    location?: LocationScope | string;
   }): OpenApplication[] {
     let list = this.db.open_applications;
 
+    if (filter?.location) {
+      const validCompanyIds = new Set(
+        this.db.companies
+          .filter((c) => matchesLocationScope(c.location, filter.location))
+          .map((c) => c.id)
+      );
+      list = list.filter((a) => validCompanyIds.has(a.companyId) || matchesLocationScope(a.companyName, filter.location));
+    }
     if (filter?.companyId) {
       list = list.filter((a) => a.companyId === filter.companyId);
     }
@@ -1251,9 +1586,18 @@ class Store {
     applicationType?: string;
     companyId?: string;
     search?: string;
+    location?: LocationScope | string;
   }): Application[] {
     let list = this.db.applications;
 
+    if (filter?.location) {
+      const validCompanyIds = new Set(
+        this.db.companies
+          .filter((c) => matchesLocationScope(c.location, filter.location))
+          .map((c) => c.id)
+      );
+      list = list.filter((a) => validCompanyIds.has(a.companyId) || matchesLocationScope(a.companyName, filter.location));
+    }
     if (filter?.status && filter.status !== 'ALL') {
       list = list.filter((a) => a.status === filter.status);
     }
@@ -1371,9 +1715,18 @@ class Store {
     outreachType?: string;
     companyId?: string;
     search?: string;
+    location?: LocationScope | string;
   }): OutreachRecord[] {
     let list = [...(this.db.outreach_records || [])];
 
+    if (filter?.location) {
+      const validCompanyIds = new Set(
+        this.db.companies
+          .filter((c) => matchesLocationScope(c.location, filter.location))
+          .map((c) => c.id)
+      );
+      list = list.filter((r) => validCompanyIds.has(r.companyId) || matchesLocationScope(r.location || r.companyName, filter.location));
+    }
     if (filter?.status && filter.status !== 'ALL') {
       list = list.filter((r) => r.status === filter.status);
     }
@@ -1460,11 +1813,18 @@ class Store {
       approvedAt?: string | null;
       scheduledAt?: string | null;
       sentAt?: string | null;
+      failedAt?: string | null;
       lastContactAt?: string | null;
       nextEligibleAt?: string | null;
       lastError?: string | null;
+      errorMessage?: string | null;
+      errorCode?: string | null;
       notes?: string | null;
+      provider?: string | null;
+      senderEmail?: string | null;
       providerMessageId?: string | null;
+      gmailMessageId?: string | null;
+      gmailThreadId?: string | null;
       replyDetectedAt?: string | null;
       threadId?: string | null;
     }
@@ -1477,11 +1837,27 @@ class Store {
     if (extra?.approvedAt !== undefined) item.approvedAt = extra.approvedAt;
     if (extra?.scheduledAt !== undefined) item.scheduledAt = extra.scheduledAt;
     if (extra?.sentAt !== undefined) item.sentAt = extra.sentAt;
+    if (extra?.failedAt !== undefined) (item as any).failedAt = extra.failedAt;
     if (extra?.lastContactAt !== undefined) item.lastContactAt = extra.lastContactAt;
     if (extra?.nextEligibleAt !== undefined) item.nextEligibleAt = extra.nextEligibleAt;
     if (extra?.lastError !== undefined) item.lastError = extra.lastError;
+    if (extra?.errorMessage !== undefined) {
+      item.lastError = extra.errorMessage;
+      (item as any).errorMessage = extra.errorMessage;
+    }
+    if (extra?.errorCode !== undefined) (item as any).errorCode = extra.errorCode;
     if (extra?.notes !== undefined) item.notes = extra.notes;
+    if (extra?.provider !== undefined) (item as any).provider = extra.provider;
+    if (extra?.senderEmail !== undefined) (item as any).senderEmail = extra.senderEmail;
     if (extra?.providerMessageId !== undefined) item.providerMessageId = extra.providerMessageId;
+    if (extra?.gmailMessageId !== undefined) {
+      item.providerMessageId = extra.gmailMessageId;
+      (item as any).gmailMessageId = extra.gmailMessageId;
+    }
+    if (extra?.gmailThreadId !== undefined) {
+      item.threadId = extra.gmailThreadId;
+      (item as any).gmailThreadId = extra.gmailThreadId;
+    }
     if (extra?.replyDetectedAt !== undefined) item.replyDetectedAt = extra.replyDetectedAt;
     if (extra?.threadId !== undefined) item.threadId = extra.threadId;
 
@@ -1498,6 +1874,48 @@ class Store {
       return true;
     }
     return false;
+  }
+
+  public getGoogleOAuthTokens(): GoogleOAuthTokenData | null {
+    return this.db.google_oauth_tokens || null;
+  }
+
+  public saveGoogleOAuthTokens(tokens: GoogleOAuthTokenData): void {
+    this.db.google_oauth_tokens = tokens;
+    this.persist();
+  }
+
+  public clearGoogleOAuthTokens(): void {
+    this.db.google_oauth_tokens = null;
+    this.persist();
+  }
+
+  public saveOAuthState(state: string, data?: { redirectUrl?: string }): void {
+    if (!this.db.oauth_states) {
+      this.db.oauth_states = {};
+    }
+    this.db.oauth_states[state] = {
+      createdAt: Date.now(),
+      redirectUrl: data?.redirectUrl,
+    };
+    // Prune stale states (> 15 mins)
+    const cutoff = Date.now() - 15 * 60 * 1000;
+    for (const key of Object.keys(this.db.oauth_states)) {
+      if (this.db.oauth_states[key].createdAt < cutoff) {
+        delete this.db.oauth_states[key];
+      }
+    }
+    this.persist();
+  }
+
+  public consumeOAuthState(state: string): { valid: boolean; redirectUrl?: string } {
+    if (!this.db.oauth_states || !this.db.oauth_states[state]) {
+      return { valid: false };
+    }
+    const stateData = this.db.oauth_states[state];
+    delete this.db.oauth_states[state];
+    this.persist();
+    return { valid: true, redirectUrl: stateData.redirectUrl };
   }
 
   public getOutreachSettings(): OutreachSettings {
@@ -1536,12 +1954,14 @@ class Store {
     return shouldAdd;
   }
 
-  public getOutreachStats(): OutreachStats {
-    const companies = this.db.companies || [];
-    const opportunities = this.db.opportunities || [];
-    const contacts = this.db.contacts || [];
-    const openApps = this.db.open_applications || [];
-    const outreachList = this.db.outreach_records || [];
+  public getOutreachStats(location?: LocationScope | string): OutreachStats {
+    const companies = this.getCompanies({ location });
+    const companyIds = new Set(companies.map((c) => c.id));
+
+    const opportunities = this.getOpportunities({ location });
+    const contacts = this.getContacts({ location });
+    const openApps = this.getOpenApplications({ location });
+    const outreachList = this.getOutreachRecords({ location });
     const settings = this.getOutreachSettings();
 
     const companiesResearched = companies.filter((c) => c.status === 'COMPLETED').length;
@@ -1568,7 +1988,7 @@ class Store {
 
     const scheduled = outreachList.filter((r) => r.status === 'SCHEDULED').length;
     const sentToday = this.getTodaySentCount();
-    const totalSent = outreachList.filter((r) => r.status === 'SENT').length + (this.db.sent_emails || []).length;
+    const totalSent = outreachList.filter((r) => r.status === 'SENT').length + (this.db.sent_emails || []).filter((s) => !location || companyIds.has(s.companyId)).length;
     const failed = outreachList.filter((r) => r.status === 'FAILED').length;
     const replies = outreachList.filter((r) => r.status === 'REPLIED').length;
     const followUpPending = outreachList.filter((r) => r.status === 'FOLLOW_UP').length;
@@ -1723,12 +2143,12 @@ class Store {
   }
 
   // --- Stats Summary ---
-  public getStats() {
-    const companies = this.db.companies;
-    const opportunities = this.db.opportunities;
-    const contacts = this.db.contacts;
-    const openApps = this.db.open_applications;
-    const apps = this.db.applications;
+  public getStats(location?: LocationScope | string) {
+    const companies = this.getCompanies({ location });
+    const opportunities = this.getOpportunities({ location });
+    const contacts = this.getContacts({ location });
+    const openApps = this.getOpenApplications({ location });
+    const apps = this.getApplications({ location });
     const errors = this.db.research_errors;
     const emailConfig = this.getEmailProviderConfig();
 
@@ -1854,6 +2274,254 @@ class Store {
       applicationsSentCount,
       todaySentCount,
       dailyLimitRemaining,
+    };
+  }
+
+  // --- Dynamic Single Source of Truth Stats Breakdown ---
+  public calculateResearchStats(scope: LocationScope = 'BANGALORE'): ResearchStatsBreakdown {
+    const companies = this.getCompanies({ location: scope });
+    const total = companies.length;
+    const completed = companies.filter((c) => c.status === 'COMPLETED').length;
+    const processing = companies.filter(
+      (c) => c.status === 'PROCESSING' || c.status === 'RESEARCHING' || c.status === 'VERIFYING'
+    ).length;
+    const failed = companies.filter((c) => c.status === 'FAILED').length;
+    const skipped = companies.filter((c) => c.status === 'SKIPPED').length;
+    const queued = Math.max(0, total - (completed + processing + failed + skipped));
+    const pending = queued;
+
+    return {
+      scope,
+      total,
+      completed,
+      processing,
+      queued,
+      failed,
+      skipped,
+      pending,
+    };
+  }
+
+  public getSourceStats(): DualSourceStats {
+    const allCompanies = this.db.companies;
+
+    const blrCompanies = allCompanies.filter((c) => matchesLocationScope(c.location, 'BANGALORE', c));
+    const hydCompanies = allCompanies.filter((c) => matchesLocationScope(c.location, 'HYDERABAD', c));
+
+    // Calculate source map discovery counts
+    let blrRaw = 0;
+    let hydRaw = 0;
+    for (const c of allCompanies) {
+      const sources = c.sources || c.companySources || [];
+      const hasBlr = sources.some((s) => s.sourceMap.includes('BANGALORE')) || matchesLocationScope(c.location, 'BANGALORE', c);
+      const hasHyd = sources.some((s) => s.sourceMap.includes('HYDERABAD')) || matchesLocationScope(c.location, 'HYDERABAD', c);
+      if (hasBlr) blrRaw++;
+      if (hasHyd) hydRaw++;
+    }
+
+    const blrDiscovered = Math.max(blrRaw, blrCompanies.length);
+    const hydDiscovered = Math.max(hydRaw, hydCompanies.length);
+
+    const blrResearched = blrCompanies.filter((c) => c.status === 'COMPLETED').length;
+    const blrProcessing = blrCompanies.filter((c) => c.status === 'PROCESSING' || c.status === 'RESEARCHING' || c.status === 'VERIFYING').length;
+    const blrFailed = blrCompanies.filter((c) => c.status === 'FAILED').length;
+    const blrSkipped = blrCompanies.filter((c) => c.status === 'SKIPPED').length;
+    const blrQueued = Math.max(0, blrCompanies.length - (blrResearched + blrProcessing + blrFailed + blrSkipped));
+
+    const hydResearched = hydCompanies.filter((c) => c.status === 'COMPLETED').length;
+    const hydProcessing = hydCompanies.filter((c) => c.status === 'PROCESSING' || c.status === 'RESEARCHING' || c.status === 'VERIFYING').length;
+    const hydFailed = hydCompanies.filter((c) => c.status === 'FAILED').length;
+    const hydSkipped = hydCompanies.filter((c) => c.status === 'SKIPPED').length;
+    const hydQueued = Math.max(0, hydCompanies.length - (hydResearched + hydProcessing + hydFailed + hydSkipped));
+
+    // Deduplication check across maps
+    const duplicates = allCompanies.filter((c) => {
+      const isBlr = matchesLocationScope(c.location, 'BANGALORE', c);
+      const isHyd = matchesLocationScope(c.location, 'HYDERABAD', c);
+      return isBlr && isHyd;
+    }).length;
+
+    const totalStored = allCompanies.length;
+    const combinedRaw = blrDiscovered + hydDiscovered;
+    const combinedUnique = totalStored;
+
+    const bangaloreStats: SourceMapStats = {
+      sourceName: 'Bangalore Startup Map',
+      sourceUrl: 'https://www.bangalorestartupmap.com/',
+      rawDiscovered: blrDiscovered,
+      uniqueCompanies: blrCompanies.length,
+      stored: blrCompanies.length,
+      researched: blrResearched,
+      processing: blrProcessing,
+      queued: blrQueued,
+      pending: blrQueued,
+      failed: blrFailed,
+      skipped: blrSkipped,
+      status: blrQueued > 0 && blrResearched > 0 ? 'RUNNING' : blrQueued === 0 ? 'COMPLETE' : 'READY',
+    };
+
+    const hyderabadStats: SourceMapStats = {
+      sourceName: 'Hyderabad Startups Map',
+      sourceUrl: 'https://www.hyderabadstartupsmap.lol/',
+      rawDiscovered: hydDiscovered,
+      uniqueCompanies: hydCompanies.length,
+      stored: hydCompanies.length,
+      researched: hydResearched,
+      processing: hydProcessing,
+      queued: hydQueued,
+      pending: hydQueued,
+      failed: hydFailed,
+      skipped: hydSkipped,
+      status: hydQueued > 0 && hydResearched > 0 ? 'RUNNING' : hydQueued === 0 ? 'COMPLETE' : 'READY',
+    };
+
+    const researchedTotal = allCompanies.filter((c) => c.status === 'COMPLETED').length;
+    const failedTotal = allCompanies.filter((c) => c.status === 'FAILED').length;
+    const pendingTotal = Math.max(0, totalStored - (researchedTotal + failedTotal));
+
+    const bangaloreMissing = Math.max(0, blrDiscovered - blrCompanies.length);
+    const hyderabadMissing = Math.max(0, hydDiscovered - hydCompanies.length);
+
+    return {
+      bangalore: bangaloreStats,
+      hyderabad: hyderabadStats,
+      duplicatesAcrossMaps: duplicates,
+      combinedRawRecords: combinedRaw,
+      combinedUniqueCompanies: combinedUnique,
+      totalStoredCompanies: totalStored,
+      totalResearchable: combinedUnique,
+      researchedTotal,
+      pendingTotal,
+      failedTotal,
+      isConsistent: bangaloreMissing === 0 && hyderabadMissing === 0,
+      discrepancies: {
+        bangaloreMissing,
+        hyderabadMissing,
+        combinedMissing: bangaloreMissing + hyderabadMissing,
+      },
+    };
+  }
+
+  public getCompanyStats(): DashboardCompanyStats {
+    const sourceStats = this.getSourceStats();
+    const blrResearch = this.calculateResearchStats('BANGALORE');
+    const hydResearch = this.calculateResearchStats('HYDERABAD');
+    const bothResearch = this.calculateResearchStats('BOTH');
+
+    const combinedResearched = sourceStats.researchedTotal;
+    const combinedProcessing = sourceStats.bangalore.processing + sourceStats.hyderabad.processing;
+    const combinedFailed = sourceStats.failedTotal;
+    const combinedSkipped = sourceStats.bangalore.skipped + sourceStats.hyderabad.skipped;
+    const combinedQueued = Math.max(
+      0,
+      sourceStats.totalStoredCompanies - (combinedResearched + combinedProcessing + combinedFailed + combinedSkipped)
+    );
+
+    return {
+      bangalore: sourceStats.bangalore,
+      hyderabad: sourceStats.hyderabad,
+      combined: {
+        sourceRecords: sourceStats.combinedRawRecords,
+        uniqueCompanies: sourceStats.combinedUniqueCompanies,
+        duplicates: sourceStats.duplicatesAcrossMaps,
+        stored: sourceStats.totalStoredCompanies,
+        researched: combinedResearched,
+        processing: combinedProcessing,
+        queued: combinedQueued,
+        pending: combinedQueued,
+        failed: combinedFailed,
+        skipped: combinedSkipped,
+        status: combinedQueued > 0 && combinedResearched > 0 ? 'RUNNING' : combinedQueued === 0 ? 'COMPLETE' : 'READY',
+      },
+      research: {
+        BANGALORE: blrResearch,
+        HYDERABAD: hydResearch,
+        BOTH: bothResearch,
+      },
+      consistency: {
+        bangaloreSource: sourceStats.bangalore.rawDiscovered,
+        bangaloreDatabase: sourceStats.bangalore.stored,
+        bangaloreDiff: sourceStats.discrepancies.bangaloreMissing,
+        hyderabadSource: sourceStats.hyderabad.rawDiscovered,
+        hyderabadDatabase: sourceStats.hyderabad.stored,
+        hyderabadDiff: sourceStats.discrepancies.hyderabadMissing,
+        combinedSource: sourceStats.combinedRawRecords,
+        combinedDatabase: sourceStats.totalStoredCompanies,
+        duplicates: sourceStats.duplicatesAcrossMaps,
+        queueCount: combinedQueued,
+        researchCount: combinedResearched,
+        isConsistent: sourceStats.isConsistent,
+        syncRequired: !sourceStats.isConsistent,
+      },
+    };
+  }
+
+  public async syncSource(sourceScope: LocationScope = 'BOTH'): Promise<{
+    scope: LocationScope;
+    added: number;
+    updated: number;
+    totalStored: number;
+    stats: DualSourceStats;
+  }> {
+    let added = 0;
+    let updated = 0;
+    const beforeCount = this.db.companies.length;
+
+    // Dynamically import crawlers to prevent circular dependency issues
+    if (sourceScope === 'BANGALORE' || sourceScope === 'BOTH') {
+      try {
+        const { crawlBangaloreStartupMap } = await import('../crawler/startupMapCrawler.ts');
+        const blrDiscovered = await crawlBangaloreStartupMap();
+        for (const item of blrDiscovered) {
+          const comp = this.upsertCompany({
+            ...item,
+            sourceMap: 'BANGALORE_STARTUP_MAP',
+            location: item.location || 'Bangalore, India',
+          });
+          if (comp.createdAt === comp.updatedAt) added++;
+          else updated++;
+        }
+      } catch (err) {
+        console.error('Error syncing Bangalore Startup Map:', err);
+      }
+    }
+
+    if (sourceScope === 'HYDERABAD' || sourceScope === 'BOTH') {
+      try {
+        const { crawlHyderabadStartupMap } = await import('../crawler/hyderabadStartupMapCrawler.ts');
+        const hydDiscovered = await crawlHyderabadStartupMap();
+        for (const item of hydDiscovered) {
+          const comp = this.upsertCompany({
+            ...item,
+            sourceMap: 'HYDERABAD_STARTUP_MAP',
+            location: item.location || 'Hyderabad, India',
+          });
+          if (comp.createdAt === comp.updatedAt) added++;
+          else updated++;
+        }
+      } catch (err) {
+        console.error('Error syncing Hyderabad Startup Map:', err);
+      }
+    }
+
+    this.persist();
+    const stats = this.getSourceStats();
+
+    this.addEvent({
+      companyId: 'system',
+      companyName: 'StartupScout AI',
+      event: 'SOURCE_SYNC_COMPLETED',
+      message: `Database synchronization complete for scope ${sourceScope}. Total canonical companies stored: ${this.db.companies.length}.`,
+      stage: 'DISCOVER_COMPANIES',
+      type: 'success',
+    });
+
+    return {
+      scope: sourceScope,
+      added,
+      updated,
+      totalStored: this.db.companies.length,
+      stats,
     };
   }
 }

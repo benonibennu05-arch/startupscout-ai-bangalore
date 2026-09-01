@@ -11,6 +11,7 @@ import { store } from '../database/store.ts';
 import { resumeService } from './resume.service.ts';
 import { geminiClient } from '../ai/geminiClient.ts';
 import { logger } from '../utils/logger.ts';
+import { gmailService, EXPECTED_SENDER_EMAIL, EXPECTED_SENDER_NAME } from './gmail.service.ts';
 import {
   APPROVED_GENERAL_INQUIRY_SUBJECT,
   getApprovedGeneralInquiryBody,
@@ -183,14 +184,25 @@ export class ApplicationEmailService {
       body?: string;
       recipientEmail?: string;
     }
-  ): Promise<{ success: boolean; message: string; record?: SentEmailRecord }> {
+  ): Promise<{ success: boolean; message: string; record?: SentEmailRecord; errorCode?: string }> {
     const app = store.getApplication(applicationId);
     if (!app) {
-      return { success: false, message: 'Application not found.' };
+      return { success: false, message: 'Application not found.', errorCode: 'NOT_FOUND' };
     }
 
     const candidate = store.getCandidateProfile();
     const config = store.getEmailProviderConfig();
+
+    // Gmail Connection Check
+    const accountInfo = await gmailService.getAccount();
+    if (!accountInfo.connected || !accountInfo.canSend) {
+      const errorMsg = accountInfo.error || 'Gmail Not Connected. Please connect tejamatta05@gmail.com in Settings.';
+      return {
+        success: false,
+        message: errorMsg,
+        errorCode: 'GMAIL_NOT_CONNECTED',
+      };
+    }
 
     // Safety Rule 1: Resume Must Be Uploaded & Present in Persistent Storage
     const currentResume = resumeService.getCurrentResume();
@@ -198,18 +210,20 @@ export class ApplicationEmailService {
       return {
         success: false,
         message: 'Resume Required: Please upload your resume in My Profile before sending applications.',
+        errorCode: 'RESUME_REQUIRED',
       };
     }
 
     const fileBuffer = resumeService.getResumeFileBuffer(app.resumeFileId || currentResume.fileId);
-    if (!fileBuffer) {
+    if (!fileBuffer || !fileBuffer.buffer || fileBuffer.buffer.length === 0) {
       return {
         success: false,
         message: `STORAGE_FAILED: Resume binary file (${currentResume.originalName}) is missing from storage. Please re-upload your resume.`,
+        errorCode: 'STORAGE_FAILED',
       };
     }
 
-    const finalRecipient = (overrides?.recipientEmail || app.recipientEmail).trim();
+    const finalRecipient = (overrides?.recipientEmail || app.recipientEmail).trim().toLowerCase();
 
     // Safety Rule 2: Valid Public Recipient Email
     const isValidEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(finalRecipient);
@@ -217,6 +231,7 @@ export class ApplicationEmailService {
       return {
         success: false,
         message: `Cannot send: Recipient "${finalRecipient}" is not a verified public email.`,
+        errorCode: 'INVALID_RECIPIENT',
       };
     }
 
@@ -227,6 +242,7 @@ export class ApplicationEmailService {
       return {
         success: false,
         message: `Daily send limit reached (${todaySent}/${limit} sent today). Please adjust daily limit in settings or try again tomorrow.`,
+        errorCode: 'DAILY_LIMIT_REACHED',
       };
     }
 
@@ -243,16 +259,51 @@ export class ApplicationEmailService {
       return {
         success: false,
         message: `Duplicate protection: ${duplicateCheck.reason}`,
+        errorCode: 'COOLDOWN_ACTIVE',
       };
     }
 
     const finalSubject = overrides?.subject || app.subject;
     const finalBody = overrides?.body || app.body;
     const now = new Date().toISOString();
-    const messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}@startupscout.ai`;
 
-    // Send via provider abstraction
-    logger.info(`Sending application [${app.applicationType}] to ${finalRecipient} via ${config.provider}`);
+    logger.info(`[ApplicationEmailService] Sending application [${app.applicationType}] to ${finalRecipient} via Gmail API`);
+
+    // Send via Gmail API
+    const sendResult = await gmailService.sendEmail({
+      to: finalRecipient,
+      subject: finalSubject,
+      textBody: finalBody,
+      fromName: EXPECTED_SENDER_NAME,
+      fromEmail: EXPECTED_SENDER_EMAIL,
+      attachment: {
+        filename: fileBuffer.filename || candidate.resumeFileName || 'Teja_Matta_Resume.pdf',
+        content: fileBuffer.buffer,
+        mimeType: fileBuffer.mimeType || 'application/pdf',
+      },
+    });
+
+    if (!sendResult.success) {
+      const failureReason = sendResult.error || 'Failed to dispatch application via Gmail API';
+      logger.error(`[ApplicationEmailService] Failed sending application: ${failureReason}`);
+
+      store.addEvent({
+        companyId: app.companyId,
+        companyName: app.companyName,
+        event: 'APPLICATION_FAILED',
+        message: `Failed sending application to ${finalRecipient}: ${failureReason}`,
+        stage: 'SEND_APPLICATION',
+        type: 'error',
+      });
+
+      return {
+        success: false,
+        message: failureReason,
+        errorCode: sendResult.errorCode || 'GMAIL_SEND_FAILED',
+      };
+    }
+
+    const messageId = sendResult.messageId || `gmail_${Date.now()}`;
 
     // Update Application Status to SENT
     store.updateApplicationStatus(app.id, 'SENT', {
@@ -276,7 +327,7 @@ export class ApplicationEmailService {
       recipientName: app.recipientName,
       subject: finalSubject,
       body: finalBody,
-      attachmentName: candidate.resumeFileName,
+      attachmentName: fileBuffer.filename || candidate.resumeFileName || 'Teja_Matta_Resume.pdf',
       sourceUrl: app.sourceUrl,
       sentAt: now,
       status: 'DELIVERED',
@@ -289,14 +340,14 @@ export class ApplicationEmailService {
       companyId: app.companyId,
       companyName: app.companyName,
       event: 'APPLICATION_SENT',
-      message: `Successfully dispatched application for ${app.roleTitle} to ${finalRecipient} (ID: ${messageId}).`,
+      message: `Successfully dispatched application for ${app.roleTitle} to ${finalRecipient} via Gmail (ID: ${messageId}).`,
       stage: 'SEND_APPLICATION',
       type: 'success',
     });
 
     return {
       success: true,
-      message: `Application sent successfully to ${finalRecipient}.`,
+      message: `Application sent successfully to ${finalRecipient} via Gmail.`,
       record: sentRecord,
     };
   }

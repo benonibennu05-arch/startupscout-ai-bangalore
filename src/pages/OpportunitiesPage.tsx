@@ -23,8 +23,9 @@ import {
   TrendingUp,
   BriefcaseBusiness,
   Building,
+  MapPin,
 } from 'lucide-react';
-import { Opportunity, OpportunityCategory, AiMlRelevance } from '../types';
+import { Opportunity, OpportunityCategory, AiMlRelevance, LocationScope } from '../types';
 import { api } from '../services/api';
 
 interface OpportunitiesPageProps {
@@ -35,6 +36,7 @@ interface OpportunitiesPageProps {
   presetCategory?: OpportunityCategory;
   pageTitle?: string;
   pageSubtitle?: string;
+  selectedLocation?: LocationScope;
 }
 
 const CATEGORY_TABS: { id: string; label: string; icon: React.ElementType }[] = [
@@ -57,8 +59,9 @@ export const OpportunitiesPage: React.FC<OpportunitiesPageProps> = ({
   presetMinScore,
   presetExperience,
   presetCategory,
-  pageTitle = 'Bangalore Startup Opportunities',
-  pageSubtitle = 'Discover ALL jobs, internships, and open roles across 957+ Bangalore startups with deep categorization',
+  pageTitle,
+  pageSubtitle,
+  selectedLocation = 'BANGALORE',
 }) => {
   const [opportunities, setOpportunities] = useState<(Opportunity & { publicEmail: string | null })[]>([]);
   const [loading, setLoading] = useState(false);
@@ -73,6 +76,22 @@ export const OpportunitiesPage: React.FC<OpportunitiesPageProps> = ({
   const [hasEmail, setHasEmail] = useState(false);
   const [hasApp, setHasApp] = useState(false);
   const [sort, setSort] = useState<'relevance' | 'match' | 'newest' | 'company'>('relevance');
+
+  const dynamicTitle =
+    pageTitle ||
+    (selectedLocation === 'BOTH'
+      ? 'Bangalore & Hyderabad Opportunities'
+      : selectedLocation === 'HYDERABAD'
+      ? 'Hyderabad Startup Opportunities'
+      : 'Bangalore Startup Opportunities');
+
+  const dynamicSubtitle =
+    pageSubtitle ||
+    (selectedLocation === 'BOTH'
+      ? 'Discover ALL jobs, internships, and open roles across Bangalore and Hyderabad startup maps'
+      : selectedLocation === 'HYDERABAD'
+      ? 'Discover ALL jobs, internships, and open roles across 500+ Hyderabad startups from hyderabadstartupsmap.lol'
+      : 'Discover ALL jobs, internships, and open roles across 957+ Bangalore startups from bangalorestartupmap.com');
 
   const fetchOpportunities = async () => {
     setLoading(true);
@@ -97,6 +116,7 @@ export const OpportunitiesPage: React.FC<OpportunitiesPageProps> = ({
         minRelevance: minScore > 0 ? minScore : undefined,
         hasEmail: hasEmail || undefined,
         hasApp: hasApp || undefined,
+        location: selectedLocation,
         sort,
       });
 
@@ -126,6 +146,7 @@ export const OpportunitiesPage: React.FC<OpportunitiesPageProps> = ({
     hasEmail,
     hasApp,
     sort,
+    selectedLocation,
   ]);
 
   const handleToggleSave = async (e: React.MouseEvent, opp: Opportunity) => {
@@ -166,13 +187,17 @@ export const OpportunitiesPage: React.FC<OpportunitiesPageProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-base font-bold text-gray-900">
-              {pageTitle}
+              {dynamicTitle}
             </h2>
             <span className="px-2 py-0.5 rounded-full text-xs font-extrabold bg-blue-100 text-blue-800">
               {opportunities.length} Total
             </span>
+            <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-gray-100 text-gray-700 flex items-center gap-1">
+              <MapPin className="w-3 h-3 text-blue-600" />
+              {selectedLocation}
+            </span>
           </div>
-          <p className="text-xs text-gray-500 font-medium">{pageSubtitle}</p>
+          <p className="text-xs text-gray-500 font-medium">{dynamicSubtitle}</p>
         </div>
       </div>
 
@@ -390,7 +415,9 @@ export const OpportunitiesPage: React.FC<OpportunitiesPageProps> = ({
                     {/* Company */}
                     <td className="py-3 px-4">
                       <div className="font-bold text-blue-700">{opp.companyName}</div>
-                      <div className="text-[10px] text-gray-400">Bangalore Map Startup</div>
+                      <div className="text-[10px] text-gray-500 font-medium">
+                        {opp.location?.toLowerCase().includes('hyderabad') ? 'Hyderabad Startup Map' : 'Bangalore Startup Map'}
+                      </div>
                     </td>
 
                     {/* Type & Experience */}

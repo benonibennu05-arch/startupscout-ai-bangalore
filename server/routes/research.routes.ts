@@ -22,3 +22,4 @@ researchRouter.post('/new-companies', (req, res) => researchController.startNewC
 researchRouter.post('/verify-all', (req, res) => researchController.verifyAll(req, res));
 researchRouter.post('/concurrency', (req, res) => researchController.setConcurrency(req, res));
 researchRouter.post('/mode', (req, res) => researchController.setMode(req, res));
+researchRouter.post('/location', (req, res) => researchController.setLocation(req, res));

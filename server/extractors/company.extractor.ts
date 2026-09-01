@@ -132,3 +132,12 @@ export function extractCompanyFromStartupMapPage(html: string, pageUrl: string):
 
   return data;
 }
+
+export function slugToCompanyName(slug: string): string {
+  if (!slug) return '';
+  return slug
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}

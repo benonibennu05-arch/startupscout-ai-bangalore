@@ -17,14 +17,18 @@ import {
   CheckCircle2,
   Trash2,
 } from 'lucide-react';
-import { Contact, EmailVerificationStatus } from '../types';
+import { Contact, EmailVerificationStatus, LocationScope } from '../types';
 import { api } from '../services/api';
 
 interface ContactsPageProps {
   onSelectCompany: (companyId: string) => void;
+  selectedLocation?: LocationScope;
 }
 
-export const ContactsPage: React.FC<ContactsPageProps> = ({ onSelectCompany }) => {
+export const ContactsPage: React.FC<ContactsPageProps> = ({
+  onSelectCompany,
+  selectedLocation = 'BANGALORE',
+}) => {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
@@ -41,7 +45,7 @@ export const ContactsPage: React.FC<ContactsPageProps> = ({ onSelectCompany }) =
 
   const fetchStats = async () => {
     try {
-      const res = await api.getContactStats();
+      const res = await api.getContactStats(selectedLocation);
       if (res.success) {
         setStats(res.stats);
       }
@@ -58,6 +62,7 @@ export const ContactsPage: React.FC<ContactsPageProps> = ({ onSelectCompany }) =
         emailType: emailType !== 'ALL' ? emailType : undefined,
         verificationStatus: verificationStatus !== 'ALL' ? verificationStatus : undefined,
         onlyWithEmail: onlyWithEmail,
+        location: selectedLocation,
       });
       setContacts(res.contacts || []);
       fetchStats();
@@ -70,7 +75,7 @@ export const ContactsPage: React.FC<ContactsPageProps> = ({ onSelectCompany }) =
 
   useEffect(() => {
     fetchContacts();
-  }, [search, emailType, verificationStatus, onlyWithEmail]);
+  }, [search, emailType, verificationStatus, onlyWithEmail, selectedLocation]);
 
   const handleCopy = (id: string, email: string) => {
     if (email && email.toLowerCase() !== 'not publicly available') {

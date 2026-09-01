@@ -13,8 +13,10 @@ import {
   AlertOctagon,
   Settings,
   User,
+  MapPin,
 } from 'lucide-react';
 import { QueueStatusResponse } from '../services/api';
+import { LocationScope } from '../types';
 
 export type NavTab =
   | 'dashboard'
@@ -36,12 +38,14 @@ interface SidebarProps {
   activeTab: NavTab;
   onTabChange: (tab: NavTab) => void;
   queueStatus: QueueStatusResponse | null;
+  selectedLocation?: LocationScope;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   onTabChange,
   queueStatus,
+  selectedLocation = 'BANGALORE',
 }) => {
   const stats = queueStatus?.stats as any;
 
@@ -192,7 +196,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="mt-auto pt-4 border-t border-gray-100 px-3">
         <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
           <div className="flex items-center justify-between text-xs text-gray-600 font-semibold mb-1">
-            <span>Map Coverage</span>
+            <span className="flex items-center gap-1">
+              <MapPin className="w-3 h-3 text-blue-600" />
+              <span>{selectedLocation === 'BOTH' ? 'Both Hubs' : selectedLocation === 'HYDERABAD' ? 'Hyderabad' : 'Bangalore'} Coverage</span>
+            </span>
             <span className="text-blue-600 font-bold">
               {stats?.researchedCompanies || 0} / {stats?.totalCompanies || 0}
             </span>
@@ -217,3 +224,4 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </aside>
   );
 };
+

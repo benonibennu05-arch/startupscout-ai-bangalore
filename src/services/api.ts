@@ -43,13 +43,34 @@ export interface QueueStatusResponse {
 
 export const api = {
   // Status & Stats
-  async getStatus(): Promise<QueueStatusResponse> {
-    const res = await fetch('/api/status');
+  async getStatus(location?: string): Promise<QueueStatusResponse> {
+    const url = location ? `/api/status?location=${encodeURIComponent(location)}` : '/api/status';
+    const res = await fetch(url);
     return res.json();
   },
 
-  async getStats() {
-    const res = await fetch('/api/stats');
+  async getStats(location?: string) {
+    const url = location ? `/api/stats?location=${encodeURIComponent(location)}` : '/api/stats';
+    const res = await fetch(url);
+    return res.json();
+  },
+
+  async getCompanyStats() {
+    const res = await fetch('/api/stats/company-stats');
+    return res.json();
+  },
+
+  async getSourceStats() {
+    const res = await fetch('/api/stats/source-stats');
+    return res.json();
+  },
+
+  async syncSource(source: 'BANGALORE' | 'HYDERABAD' | 'BOTH' = 'BOTH') {
+    const res = await fetch('/api/sync/source', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope: source }),
+    });
     return res.json();
   },
 
@@ -59,20 +80,47 @@ export const api = {
   },
 
   // Research Controls
-  async startTest10(mode: ResearchMode = 'FAST', concurrency = 10) {
+  async startTest10(mode: ResearchMode = 'FAST', concurrency = 10, location = 'BANGALORE') {
     const res = await fetch('/api/research/test-10', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, concurrency }),
+      body: JSON.stringify({ mode, concurrency, location }),
     });
     return res.json();
   },
 
-  async startFullResearch(mode: ResearchMode = 'FAST', concurrency = 10, forceRefresh = false) {
+  async startFullResearch(mode: ResearchMode = 'FAST', concurrency = 10, forceRefresh = false, location = 'BANGALORE') {
     const res = await fetch('/api/research/full', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, concurrency, forceRefresh }),
+      body: JSON.stringify({ mode, concurrency, forceRefresh, location }),
+    });
+    return res.json();
+  },
+
+  async startIncremental(mode: ResearchMode = 'FAST', concurrency = 10, location = 'BANGALORE') {
+    const res = await fetch('/api/research/incremental', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, concurrency, location }),
+    });
+    return res.json();
+  },
+
+  async startNewCompanies(mode: ResearchMode = 'FAST', concurrency = 10, location = 'BANGALORE') {
+    const res = await fetch('/api/research/new-companies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, concurrency, location }),
+    });
+    return res.json();
+  },
+
+  async discoverCompanies(source: 'BANGALORE' | 'HYDERABAD' | 'BOTH' = 'BANGALORE') {
+    const res = await fetch('/api/companies/discover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source }),
     });
     return res.json();
   },
@@ -92,11 +140,11 @@ export const api = {
     return res.json();
   },
 
-  async retryFailed(concurrency = 10) {
+  async retryFailed(concurrency = 10, location = 'BANGALORE') {
     const res = await fetch('/api/research/retry-failed', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ concurrency }),
+      body: JSON.stringify({ concurrency, location }),
     });
     return res.json();
   },
@@ -119,11 +167,21 @@ export const api = {
     return res.json();
   },
 
+  async setLocation(location: 'BANGALORE' | 'HYDERABAD' | 'BOTH') {
+    const res = await fetch('/api/research/location', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location }),
+    });
+    return res.json();
+  },
+
   // Companies
   async getCompanies(params: {
     search?: string;
     status?: string;
     sector?: string;
+    location?: string;
     hasJobs?: boolean;
     hasEmail?: boolean;
     sort?: string;
@@ -132,6 +190,7 @@ export const api = {
     if (params.search) query.set('search', params.search);
     if (params.status) query.set('status', params.status);
     if (params.sector) query.set('sector', params.sector);
+    if (params.location) query.set('location', params.location);
     if (params.hasJobs) query.set('hasJobs', 'true');
     if (params.hasEmail) query.set('hasEmail', 'true');
     if (params.sort) query.set('sort', params.sort);
@@ -163,6 +222,7 @@ export const api = {
     type?: string;
     experienceLevel?: string;
     remote?: string;
+    location?: string;
     verificationStatus?: string;
     minRelevance?: number;
     hasEmail?: boolean;
@@ -180,6 +240,7 @@ export const api = {
     if (params.type) query.set('type', params.type);
     if (params.experienceLevel) query.set('experienceLevel', params.experienceLevel);
     if (params.remote) query.set('remote', params.remote);
+    if (params.location) query.set('location', params.location);
     if (params.verificationStatus) query.set('verificationStatus', params.verificationStatus);
     if (params.minRelevance) query.set('minRelevance', params.minRelevance.toString());
     if (params.hasEmail) query.set('hasEmail', 'true');
@@ -279,6 +340,7 @@ export const api = {
     companyId?: string;
     emailType?: string;
     verificationStatus?: string;
+    location?: string;
     search?: string;
     onlyWithEmail?: boolean;
   } = {}): Promise<{ total: number; contacts: Contact[] }> {
@@ -286,6 +348,7 @@ export const api = {
     if (params.companyId) query.set('companyId', params.companyId);
     if (params.emailType) query.set('emailType', params.emailType);
     if (params.verificationStatus) query.set('verificationStatus', params.verificationStatus);
+    if (params.location) query.set('location', params.location);
     if (params.search) query.set('search', params.search);
     if (params.onlyWithEmail) query.set('onlyWithEmail', 'true');
 
@@ -293,8 +356,9 @@ export const api = {
     return res.json();
   },
 
-  async getContactStats(): Promise<{ success: boolean; stats: any }> {
-    const res = await fetch('/api/contacts/stats');
+  async getContactStats(location?: string): Promise<{ success: boolean; stats: any }> {
+    const url = location ? `/api/contacts/stats?location=${encodeURIComponent(location)}` : '/api/contacts/stats';
+    const res = await fetch(url);
     return res.json();
   },
 
@@ -333,12 +397,14 @@ export const api = {
   async getOpenApplications(params: {
     companyId?: string;
     status?: string;
+    location?: string;
     onlyWithEmail?: boolean;
     search?: string;
   } = {}): Promise<OpenApplication[]> {
     const query = new URLSearchParams();
     if (params.companyId) query.set('companyId', params.companyId);
     if (params.status) query.set('status', params.status);
+    if (params.location) query.set('location', params.location);
     if (params.onlyWithEmail) query.set('onlyWithEmail', 'true');
     if (params.search) query.set('search', params.search);
 
@@ -356,12 +422,14 @@ export const api = {
     status?: string;
     applicationType?: string;
     companyId?: string;
+    location?: string;
     search?: string;
   } = {}): Promise<Application[]> {
     const query = new URLSearchParams();
     if (params.status) query.set('status', params.status);
     if (params.applicationType) query.set('applicationType', params.applicationType);
     if (params.companyId) query.set('companyId', params.companyId);
+    if (params.location) query.set('location', params.location);
     if (params.search) query.set('search', params.search);
 
     const res = await fetch(`/api/applications?${query.toString()}`);
@@ -625,35 +693,41 @@ export const api = {
     status?: string;
     outreachType?: string;
     companyId?: string;
+    location?: string;
     search?: string;
   } = {}): Promise<any[]> {
     const query = new URLSearchParams();
     if (params.status) query.set('status', params.status);
     if (params.outreachType) query.set('outreachType', params.outreachType);
     if (params.companyId) query.set('companyId', params.companyId);
+    if (params.location) query.set('location', params.location);
     if (params.search) query.set('search', params.search);
 
     const res = await fetch(`/api/outreach?${query.toString()}`);
     return res.json();
   },
 
-  async getReadyOutreach(): Promise<any[]> {
-    const res = await fetch('/api/outreach/ready');
+  async getReadyOutreach(location?: string): Promise<any[]> {
+    const url = location ? `/api/outreach/ready?location=${encodeURIComponent(location)}` : '/api/outreach/ready';
+    const res = await fetch(url);
     return res.json();
   },
 
-  async getSentOutreach(): Promise<any[]> {
-    const res = await fetch('/api/outreach/sent');
+  async getSentOutreach(location?: string): Promise<any[]> {
+    const url = location ? `/api/outreach/sent?location=${encodeURIComponent(location)}` : '/api/outreach/sent';
+    const res = await fetch(url);
     return res.json();
   },
 
-  async getScheduledOutreach(): Promise<any[]> {
-    const res = await fetch('/api/outreach/scheduled');
+  async getScheduledOutreach(location?: string): Promise<any[]> {
+    const url = location ? `/api/outreach/scheduled?location=${encodeURIComponent(location)}` : '/api/outreach/scheduled';
+    const res = await fetch(url);
     return res.json();
   },
 
-  async getOutreachStats(): Promise<any> {
-    const res = await fetch('/api/outreach/stats');
+  async getOutreachStats(location?: string): Promise<any> {
+    const url = location ? `/api/outreach/stats?location=${encodeURIComponent(location)}` : '/api/outreach/stats';
+    const res = await fetch(url);
     return res.json();
   },
 
@@ -772,11 +846,16 @@ export const api = {
     return res.json();
   },
 
-  async connectGmail(accountEmail?: string, accessToken?: string): Promise<any> {
-    const res = await fetch('/api/email/connect', {
+  async getGoogleAuthUrl(returnUrl = '/outreach'): Promise<{ authUrl?: string; error?: string; code?: string }> {
+    const res = await fetch(`/api/auth/google?json=true&returnUrl=${encodeURIComponent(returnUrl)}`);
+    return res.json();
+  },
+
+  async submitGoogleAccessToken(accessToken: string, expiresIn?: number): Promise<any> {
+    const res = await fetch('/api/auth/google/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accountEmail, accessToken }),
+      body: JSON.stringify({ accessToken, expiresIn }),
     });
     return res.json();
   },

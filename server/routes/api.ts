@@ -10,6 +10,7 @@ import { exportRouter } from './export.routes.ts';
 import { settingsRouter } from './settings.routes.ts';
 import { applicationsRouter } from './applications.routes.ts';
 import { outreachRouter, emailRouter, outreachSettingsRouter } from './outreach.routes.ts';
+import { authRouter } from './auth.routes.ts';
 import { exportService } from '../services/export.service.ts';
 import { verificationService } from '../services/verification.service.ts';
 import { companyResearchService } from '../services/companyResearch.service.ts';
@@ -30,16 +31,54 @@ apiRouter.use('/settings/outreach', outreachSettingsRouter);
 apiRouter.use('/settings', settingsRouter);
 apiRouter.use('/outreach', outreachRouter);
 apiRouter.use('/email', emailRouter);
+apiRouter.use('/auth', authRouter);
 apiRouter.use('/profile', profileRouter);
 apiRouter.use('/', applicationsRouter);
 
 // --- Direct top-level aliases for frontend compatibility ---
 apiRouter.get('/status', (req, res) => {
-  res.json(researchQueue.getStatus());
+  const location = (req.query.location as any) || undefined;
+  res.json(researchQueue.getStatus(location));
+});
+
+apiRouter.get('/stats/company-stats', (_req, res) => {
+  res.json(store.getCompanyStats());
+});
+
+apiRouter.get('/stats/source-stats', (_req, res) => {
+  res.json(store.getSourceStats());
 });
 
 apiRouter.get('/stats', (req, res) => {
-  res.json(store.getStats());
+  const location = (req.query.location as string) || (req.query.sourceMap as string) || undefined;
+  const baseStats = store.getStats(location);
+  const companyStats = store.getCompanyStats();
+  const sourceStats = store.getSourceStats();
+  res.json({
+    ...baseStats,
+    companyStats,
+    sourceStats,
+  });
+});
+
+apiRouter.post('/sync/source', async (req, res) => {
+  const scope = (req.body.scope || req.body.source || 'BOTH') as any;
+  try {
+    const result = await store.syncSource(scope);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Sync failed' });
+  }
+});
+
+apiRouter.post('/sync/sources', async (req, res) => {
+  const scope = (req.body.scope || req.body.source || 'BOTH') as any;
+  try {
+    const result = await store.syncSource(scope);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Sync failed' });
+  }
 });
 
 apiRouter.get('/events', (req, res) => {

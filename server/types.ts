@@ -51,13 +51,149 @@ export interface OutreachSettings {
   gmailConnected: boolean;
   gmailAccountEmail: string | null;
   gmailAccessToken?: string | null;
+  gmailRefreshToken?: string | null;
+  gmailTokenExpiry?: number | null;
+  lastOAuthError?: string | null;
   doNotContactCompanyIds: string[];
+}
+
+export interface GoogleOAuthTokenData {
+  accessToken: string;
+  refreshToken?: string;
+  expiryDate?: number;
+  scope?: string;
+  tokenType?: string;
+  idToken?: string;
+  email: string;
+  name?: string;
+  picture?: string;
+  connectedAt: string;
+  updatedAt: string;
+}
+
+export interface EmailStatusResponse {
+  connected: boolean;
+  email: string | null;
+  provider: 'gmail';
+  canSend: boolean;
+  isExpectedAccount: boolean;
+  expectedEmail: string;
+  dailyLimit: number;
+  sentToday: number;
+  remainingToday: number;
+  hasResume: boolean;
+  resumeFileName: string | null;
+  automationMode: AutomationMode;
+  cooldownDays: number;
+  error?: string | null;
+  googleAuthConfigured?: boolean;
+}
+
+export type StartupMapSource =
+  | 'BANGALORE_STARTUP_MAP'
+  | 'HYDERABAD_STARTUP_MAP'
+  | 'BANGALORE'
+  | 'HYDERABAD'
+  | 'BOTH';
+export type LocationScope = 'BANGALORE' | 'HYDERABAD' | 'BOTH';
+
+export interface CompanySource {
+  id: string;
+  companyId: string;
+  sourceMap: StartupMapSource;
+  sourceUrl: string;
+  sourceCompanyUrl?: string;
+  discoveredAt: string;
+}
+
+export interface SourceMapStats {
+  sourceName: string;
+  sourceUrl: string;
+  rawDiscovered: number;
+  uniqueCompanies: number;
+  stored: number;
+  researched: number;
+  processing: number;
+  queued: number;
+  pending: number;
+  failed: number;
+  skipped: number;
+  status: 'READY' | 'RUNNING' | 'COMPLETE';
+}
+
+export interface DualSourceStats {
+  bangalore: SourceMapStats;
+  hyderabad: SourceMapStats;
+  duplicatesAcrossMaps: number;
+  combinedRawRecords: number;
+  combinedUniqueCompanies: number;
+  totalStoredCompanies: number;
+  totalResearchable: number;
+  researchedTotal: number;
+  pendingTotal: number;
+  failedTotal: number;
+  isConsistent: boolean;
+  discrepancies: {
+    bangaloreMissing: number;
+    hyderabadMissing: number;
+    combinedMissing: number;
+  };
+}
+
+export interface ResearchStatsBreakdown {
+  scope: LocationScope;
+  total: number;
+  completed: number;
+  processing: number;
+  queued: number;
+  failed: number;
+  skipped: number;
+  pending: number;
+}
+
+export interface DashboardCompanyStats {
+  bangalore: SourceMapStats;
+  hyderabad: SourceMapStats;
+  combined: {
+    sourceRecords: number;
+    uniqueCompanies: number;
+    duplicates: number;
+    stored: number;
+    researched: number;
+    processing: number;
+    queued: number;
+    pending: number;
+    failed: number;
+    skipped: number;
+    status: 'READY' | 'RUNNING' | 'COMPLETE';
+  };
+  research: {
+    BANGALORE: ResearchStatsBreakdown;
+    HYDERABAD: ResearchStatsBreakdown;
+    BOTH: ResearchStatsBreakdown;
+  };
+  consistency: {
+    bangaloreSource: number;
+    bangaloreDatabase: number;
+    bangaloreDiff: number;
+    hyderabadSource: number;
+    hyderabadDatabase: number;
+    hyderabadDiff: number;
+    combinedSource: number;
+    combinedDatabase: number;
+    duplicates: number;
+    queueCount: number;
+    researchCount: number;
+    isConsistent: boolean;
+    syncRequired: boolean;
+  };
 }
 
 export interface OutreachRecord {
   id: string;
   companyId: string;
   companyName: string;
+  location?: string;
   opportunityId?: string | null;
   openApplicationId?: string | null;
   outreachType: OutreachType;
@@ -86,9 +222,16 @@ export interface OutreachRecord {
   approvedAt?: string | null;
   scheduledAt?: string | null;
   sentAt?: string | null;
+  failedAt?: string | null;
   lastContactAt?: string | null;
   nextEligibleAt?: string | null;
   lastError?: string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  gmailMessageId?: string | null;
+  gmailThreadId?: string | null;
+  provider?: string | null;
+  senderEmail?: string | null;
   providerMessageId?: string | null;
   replyDetectedAt?: string | null;
   threadId?: string | null;
@@ -264,6 +407,8 @@ export interface OpenApplication {
   id: string;
   companyId: string;
   companyName: string;
+  location?: string;
+  sourceMap?: StartupMapSource;
   sourceUrl: string;
   sourceText: string;
   evidence: string;
@@ -282,6 +427,8 @@ export interface Application {
   id: string;
   companyId: string;
   companyName: string;
+  location?: string;
+  sourceMap?: StartupMapSource;
   opportunityId?: string | null;
   openApplicationId?: string | null;
   applicationType: ApplicationType;
@@ -404,12 +551,15 @@ export type ConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 export type OpportunityStatus = 'OPEN' | 'CLOSED' | 'UNKNOWN';
 
 export type CompanyStatus =
+  | 'DISCOVERED'
   | 'PENDING'
-  | 'DISCOVERING'
+  | 'QUEUED'
+  | 'PROCESSING'
   | 'RESEARCHING'
   | 'VERIFYING'
   | 'COMPLETED'
   | 'FAILED'
+  | 'SKIPPED'
   | 'RETRYING';
 
 export type EmailType =
@@ -431,6 +581,7 @@ export type EmailSourceType =
   | 'OFFICIAL_TEAM_PAGE'
   | 'OFFICIAL_COMPANY_PAGE'
   | 'BANGALORE_STARTUP_MAP'
+  | 'HYDERABAD_STARTUP_MAP'
   | 'PUBLIC_PROFESSIONAL_PROFILE'
   | 'PUBLIC_JOB_BOARD'
   | 'OTHER_PUBLIC_SOURCE'
@@ -460,8 +611,21 @@ export type ResearchStage =
 
 export interface Company {
   id: string;
+  canonicalCompanyId?: string;
   name: string;
+  canonicalName?: string;
+  normalizedName?: string;
+  officialDomain?: string;
+  location: string;
+  locations?: string[];
+  sourceMap?: StartupMapSource;
+  sourceUrl?: string;
+  sourceMapUrl?: string;
+  sourceCompanyUrl?: string;
   startupMapUrl: string;
+  discoveredAt?: string;
+  sources?: CompanySource[];
+  companySources?: CompanySource[];
   officialWebsite: string | null;
   websiteVerified: boolean;
   websiteSourceUrl: string | null;
@@ -469,7 +633,6 @@ export interface Company {
   sector: string | null;
   category: string | null;
   tags: string[];
-  location: string | null;
   foundedYear: number | null;
   startupStage: string | null;
   teamSize: string | null;
@@ -478,6 +641,7 @@ export interface Company {
   jobBoardUrl: string | null;
   atsProvider?: string | null;
   status: CompanyStatus;
+  researchStatus?: CompanyStatus;
   lastResearchedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -493,6 +657,7 @@ export interface Opportunity {
   employmentType: string;
   experienceLevel: ExperienceLevel;
   location: string;
+  sourceMap?: StartupMapSource;
   remote: RemotePolicy;
   description: string;
   responsibilities: string[];
@@ -523,6 +688,7 @@ export interface Opportunity {
 
 export interface OpportunityFilter {
   companyId?: string;
+  location?: LocationScope | string;
   category?: OpportunityCategory | 'ALL';
   type?: OpportunityType | 'ALL';
   experienceLevel?: ExperienceLevel | 'ALL';
@@ -543,6 +709,8 @@ export interface Contact {
   id: string;
   companyId: string;
   companyName: string;
+  location?: string;
+  sourceMap?: StartupMapSource;
   name?: string | null; // Named recruiter, talent partner, founder or null if generic inbox
   role?: string | null; // e.g. "Talent Acquisition Manager", "Founder & CEO"
   email: string; // Exact public email, or "NOT PUBLICLY AVAILABLE" if only person profile found
@@ -563,6 +731,7 @@ export interface Contact {
 
 export interface ContactFilter {
   companyId?: string;
+  location?: LocationScope | string;
   verificationStatus?: EmailVerificationStatus | 'ALL';
   emailType?: EmailType | 'ALL';
   search?: string;
@@ -614,6 +783,17 @@ export interface DashboardStats {
   savedJobsCount: number;
   appliedJobsCount: number;
   newJobsCount: number;
+  // Location breakdowns
+  bangaloreStats?: Partial<DashboardStats>;
+  hyderabadStats?: Partial<DashboardStats>;
+  totalCompaniesBangalore?: number;
+  totalCompaniesHyderabad?: number;
+  totalOpportunitiesBangalore?: number;
+  totalOpportunitiesHyderabad?: number;
+  totalContactsBangalore?: number;
+  totalContactsHyderabad?: number;
+  totalOutreachBangalore?: number;
+  totalOutreachHyderabad?: number;
 }
 
 export type ResearchMode = 'FAST' | 'BALANCED' | 'DEEP';
@@ -644,13 +824,15 @@ export interface ResearchRun {
   startedAt: string;
   completedAt: string | null;
   status: 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'STOPPED' | 'FAILED';
+  location?: LocationScope;
+  sourceMap?: StartupMapSource | 'BOTH';
   totalCompanies: number;
   completedCompanies: number;
   failedCompanies: number;
   jobsFound: number;
   internshipsFound: number;
   emailsFound: number;
-  batchType: 'TEST_10' | 'FULL_MAP' | 'CUSTOM_SELECTION' | 'RETRY_FAILED' | 'RECHECK';
+  batchType: 'TEST_10' | 'FULL_MAP' | 'CUSTOM_SELECTION' | 'RETRY_FAILED' | 'RECHECK' | 'BANGALORE_MAP' | 'HYDERABAD_MAP' | 'BOTH_MAPS';
   mode?: ResearchMode;
   concurrency?: number;
 }

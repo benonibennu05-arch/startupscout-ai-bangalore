@@ -1,6 +1,6 @@
 {
   "name": "StartupScout AI",
-  "description": "AI-powered Bangalore startup employment intelligence platform discovering real companies, jobs, internships, open talent pool opportunities, verified public recruitment contacts, and human-in-the-loop cold application pipeline.",
+  "description": "AI-powered Bangalore & Hyderabad startup employment intelligence platform discovering real companies, jobs, internships, open talent pool opportunities, verified public recruitment contacts, and human-in-the-loop cold application pipeline.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -13,9 +13,13 @@ import {
   ChevronRight,
   Inbox,
   SendHorizontal,
+  MapPin,
+  Globe,
+  Layers,
+  Zap,
 } from 'lucide-react';
 import { QueueStatusResponse } from '../services/api';
-import { ResearchEvent, Opportunity, Company, Contact } from '../types';
+import { ResearchEvent, Opportunity, Company, Contact, LocationScope } from '../types';
 import { StatCard } from '../components/StatCard';
 import { ResearchLiveCard } from '../components/ResearchLiveCard';
 import { NavTab } from '../components/Sidebar';
@@ -23,6 +27,8 @@ import { NavTab } from '../components/Sidebar';
 interface DashboardPageProps {
   queueStatus: QueueStatusResponse | null;
   events: ResearchEvent[];
+  selectedLocation: LocationScope;
+  onLocationChange: (loc: LocationScope) => void;
   onNavigate: (tab: NavTab) => void;
   onPause: () => void;
   onResume: () => void;
@@ -33,11 +39,15 @@ interface DashboardPageProps {
   recentOpportunities: (Opportunity & { publicEmail: string | null })[];
   recentCompanies: Company[];
   recentContacts: Contact[];
+  onStartTest10?: () => void;
+  onStartFull?: () => void;
 }
 
 export const DashboardPage: React.FC<DashboardPageProps> = ({
   queueStatus,
   events,
+  selectedLocation,
+  onLocationChange,
   onNavigate,
   onPause,
   onResume,
@@ -48,15 +58,171 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   recentOpportunities,
   recentCompanies,
   recentContacts,
+  onStartTest10,
+  onStartFull,
 }) => {
   const stats = queueStatus?.stats as any;
+  const companyStats = stats?.companyStats;
+
+  const blrStored = companyStats?.bangalore?.stored ?? (selectedLocation === 'BANGALORE' ? (stats?.totalCompanies || 0) : 0);
+  const blrResearched = companyStats?.bangalore?.researched ?? (selectedLocation === 'BANGALORE' ? (stats?.researchedCompanies || 0) : 0);
+
+  const hydStored = companyStats?.hyderabad?.stored ?? (selectedLocation === 'HYDERABAD' ? (stats?.totalCompanies || 0) : 0);
+  const hydResearched = companyStats?.hyderabad?.researched ?? (selectedLocation === 'HYDERABAD' ? (stats?.researchedCompanies || 0) : 0);
+
+  const bothStored = companyStats?.combined?.stored ?? (selectedLocation === 'BOTH' ? (stats?.totalCompanies || 0) : (blrStored + hydStored));
+  const bothResearched = companyStats?.combined?.researched ?? (selectedLocation === 'BOTH' ? (stats?.researchedCompanies || 0) : (blrResearched + hydResearched));
+
+  const locationDetails: Record<LocationScope, { title: string; subtitle: string; sourceUrl: string; count: string }> = {
+    BANGALORE: {
+      title: 'Bangalore Startup Ecosystem',
+      subtitle: 'Official source: bangalorestartupmap.com',
+      sourceUrl: 'https://www.bangalorestartupmap.com/',
+      count: `${blrStored} Startups in DB (${blrResearched} Researched)`,
+    },
+    HYDERABAD: {
+      title: 'Hyderabad Startup Ecosystem',
+      subtitle: 'Official source: hyderabadstartupsmap.lol',
+      sourceUrl: 'https://www.hyderabadstartupsmap.lol/',
+      count: `${hydStored} Startups in DB (${hydResearched} Researched)`,
+    },
+    BOTH: {
+      title: 'Bangalore & Hyderabad Dual Ecosystems',
+      subtitle: 'Combined parallel intelligence across both major Indian tech capitals',
+      sourceUrl: 'https://www.bangalorestartupmap.com/ & https://www.hyderabadstartupsmap.lol/',
+      count: `${bothStored} Total Startups in DB (${bothResearched} Researched)`,
+    },
+  };
+
+  const currentLoc = locationDetails[selectedLocation];
 
   return (
     <div id="dashboard-page" className="space-y-6">
+      {/* Startup Map Source Selector Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+        {/* Bangalore Map Card */}
+        <div
+          onClick={() => onLocationChange('BANGALORE')}
+          className={`cursor-pointer rounded-xl p-4 transition-all border flex flex-col justify-between ${
+            selectedLocation === 'BANGALORE'
+              ? 'bg-blue-50/80 border-blue-500 ring-2 ring-blue-500/20 shadow-xs'
+              : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50/50'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                BLR
+              </div>
+              <div>
+                <h3 className="text-xs font-bold text-gray-900">Bangalore Startup Map</h3>
+                <a
+                  href="https://www.bangalorestartupmap.com/"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-[11px] text-blue-600 hover:underline flex items-center gap-1 font-medium"
+                >
+                  bangalorestartupmap.com <ExternalLink className="w-2.5 h-2.5" />
+                </a>
+              </div>
+            </div>
+            {selectedLocation === 'BANGALORE' && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-600 text-white">
+                ACTIVE
+              </span>
+            )}
+          </div>
+          <div className="mt-3 pt-2.5 border-t border-gray-100 flex items-center justify-between text-xs text-gray-600">
+            <span className="font-semibold">{blrStored} Tech Startups</span>
+            <span className="text-[11px] font-medium text-gray-500">
+              {blrResearched > 0 ? `${blrResearched} Researched` : 'Silicon Valley of India'}
+            </span>
+          </div>
+        </div>
+
+        {/* Hyderabad Map Card */}
+        <div
+          onClick={() => onLocationChange('HYDERABAD')}
+          className={`cursor-pointer rounded-xl p-4 transition-all border flex flex-col justify-between ${
+            selectedLocation === 'HYDERABAD'
+              ? 'bg-indigo-50/80 border-indigo-500 ring-2 ring-indigo-500/20 shadow-xs'
+              : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50/50'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                HYD
+              </div>
+              <div>
+                <h3 className="text-xs font-bold text-gray-900">Hyderabad Startups Map</h3>
+                <a
+                  href="https://www.hyderabadstartupsmap.lol/"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-[11px] text-indigo-600 hover:underline flex items-center gap-1 font-medium"
+                >
+                  hyderabadstartupsmap.lol <ExternalLink className="w-2.5 h-2.5" />
+                </a>
+              </div>
+            </div>
+            {selectedLocation === 'HYDERABAD' && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-600 text-white">
+                ACTIVE
+              </span>
+            )}
+          </div>
+          <div className="mt-3 pt-2.5 border-t border-gray-100 flex items-center justify-between text-xs text-gray-600">
+            <span className="font-semibold">{hydStored} Tech Startups</span>
+            <span className="text-[11px] font-medium text-gray-500">
+              {hydResearched > 0 ? `${hydResearched} Researched` : 'HITEC City & Cyberabad Hub'}
+            </span>
+          </div>
+        </div>
+
+        {/* Combined Dual Hubs Card */}
+        <div
+          onClick={() => onLocationChange('BOTH')}
+          className={`cursor-pointer rounded-xl p-4 transition-all border flex flex-col justify-between ${
+            selectedLocation === 'BOTH'
+              ? 'bg-emerald-50/80 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs'
+              : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50/50'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                <Globe className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-xs font-bold text-gray-900">Both Startup Maps</h3>
+                <span className="text-[11px] text-emerald-700 font-medium">
+                  Bangalore + Hyderabad Combined
+                </span>
+              </div>
+            </div>
+            {selectedLocation === 'BOTH' && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-600 text-white">
+                ACTIVE
+              </span>
+            )}
+          </div>
+          <div className="mt-3 pt-2.5 border-t border-gray-100 flex items-center justify-between text-xs text-gray-600">
+            <span className="font-semibold">{bothStored} Canonical Startups</span>
+            <span className="text-[11px] font-medium text-gray-500">
+              {bothResearched > 0 ? `${bothResearched} Researched` : 'Full Dual Pipeline'}
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* Live Research Activity Section */}
       <ResearchLiveCard
         queueStatus={queueStatus}
         events={events}
+        selectedLocation={selectedLocation}
         onPause={onPause}
         onResume={onResume}
         onStop={onStop}
@@ -66,20 +232,23 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       {/* Action Pipeline Quick Banner */}
       <div className="bg-gradient-to-r from-emerald-950 via-teal-900 to-indigo-950 text-white rounded-xl p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/30 text-emerald-200 border border-emerald-400/30">
               Automated Outreach Pipeline
             </span>
             <span className="text-sm font-semibold">
-              End-to-End Cold Email Engine (Zero Guessed Emails)
+              Cold Email Engine (Zero Guessed Emails)
+            </span>
+            <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-white/10 text-emerald-200">
+              {currentLoc.title}
             </span>
           </div>
           <p className="text-xs text-emerald-200/90 max-w-xl">
-            Processes all 957+ Bangalore startups. Generates job applications for open roles or personalized AI/ML career inquiries for companies without vacancies.
+            Auto-discovers career portals, checks ATS platforms (Greenhouse, Lever, Ashby, Workable, Keka), and drafts customized outreach for verified job openings and talent pools across {currentLoc.title}.
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           <button
             onClick={() => onNavigate('open_applications')}
             className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-xs font-semibold transition border border-white/20 flex items-center gap-1.5 cursor-pointer"
@@ -102,7 +271,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatCard
           id="stat-companies"
-          title="Companies Discovered"
+          title={`Companies (${selectedLocation === 'BOTH' ? 'Both' : selectedLocation === 'HYDERABAD' ? 'Hyd' : 'Blr'})`}
           value={stats?.totalCompanies || 0}
           subtitle={`${stats?.researchedCompanies || 0} fully researched`}
           icon={Building2}
@@ -190,10 +359,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         <div className="flex items-center justify-between pb-2 mb-3 border-b border-gray-100">
           <div>
             <h3 className="text-xs font-bold text-gray-900 uppercase tracking-wider">
-              Comprehensive Role Distribution (All Opportunities)
+              Comprehensive Role Distribution ({selectedLocation === 'BOTH' ? 'Bangalore & Hyderabad' : selectedLocation === 'HYDERABAD' ? 'Hyderabad Map' : 'Bangalore Map'})
             </h3>
             <p className="text-[11px] text-gray-500 font-medium">
-              Every job category discovered across 957+ Bangalore Startup Map companies
+              Every job category discovered across {currentLoc.title}
             </p>
           </div>
           <button
@@ -294,10 +463,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           <div className="flex items-center justify-between pb-3 border-b border-gray-100 mb-4">
             <div>
               <h2 className="text-sm font-bold text-gray-900">
-                Top AI & Tech Opportunities in Bangalore
+                Top Opportunities in {selectedLocation === 'BOTH' ? 'Bangalore & Hyderabad' : selectedLocation === 'HYDERABAD' ? 'Hyderabad' : 'Bangalore'}
               </h2>
               <p className="text-xs text-gray-500 font-medium">
-                Ranked by AI relevance score and verification confidence
+                Ranked by AI relevance score and verified career link confidence
               </p>
             </div>
             <button
@@ -310,7 +479,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
           {recentOpportunities.length === 0 ? (
             <div className="text-center py-10 text-xs text-gray-500 bg-gray-50 rounded-xl border border-gray-200/80">
-              No opportunities discovered yet. Click "Test Batch (10 Startups)" to begin real-time crawling.
+              No opportunities discovered for {currentLoc.title} yet. Click "Test 10" or "Research ALL" to begin crawling.
             </div>
           ) : (
             <div className="space-y-2.5">
@@ -321,13 +490,22 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   className="p-3.5 rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-xs transition-all cursor-pointer bg-white flex items-start justify-between gap-3"
                 >
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-bold text-gray-900">{opp.title}</span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                          opp.location?.toLowerCase().includes('hyderabad')
+                            ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                            : 'bg-blue-50 text-blue-700 border border-blue-200'
+                        }`}
+                      >
+                        {opp.location?.toLowerCase().includes('hyderabad') ? 'Hyderabad' : 'Bangalore'}
+                      </span>
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                           opp.type === 'INTERNSHIP'
                             ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                            : 'bg-blue-50 text-blue-700 border border-blue-200'
+                            : 'bg-gray-100 text-gray-700 border border-gray-200'
                         }`}
                       >
                         {opp.type}
@@ -365,12 +543,14 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           )}
         </div>
 
-        {/* Right 1 Col: Bangalore Startups & Contacts */}
+        {/* Right 1 Col: Startups & Contacts */}
         <div className="space-y-6">
           {/* Companies card */}
           <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-xs">
             <div className="flex items-center justify-between pb-3 border-b border-gray-100 mb-3">
-              <h2 className="text-sm font-bold text-gray-900">Bangalore Startups</h2>
+              <h2 className="text-sm font-bold text-gray-900">
+                {selectedLocation === 'BOTH' ? 'Discovered Startups' : selectedLocation === 'HYDERABAD' ? 'Hyderabad Startups' : 'Bangalore Startups'}
+              </h2>
               <button
                 onClick={() => onNavigate('companies')}
                 className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1"
@@ -386,7 +566,16 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   className="p-2.5 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50/20 transition-all cursor-pointer flex items-center justify-between"
                 >
                   <div>
-                    <div className="text-xs font-bold text-gray-900">{c.name}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-gray-900">{c.name}</span>
+                      <span className={`px-1.5 py-0.2 rounded-xs text-[9px] font-bold ${
+                        (c as any).sourceMap === 'HYDERABAD' || c.location?.toLowerCase().includes('hyderabad')
+                          ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                          : 'bg-blue-50 text-blue-700 border border-blue-200'
+                      }`}>
+                        {(c as any).sourceMap === 'HYDERABAD' || c.location?.toLowerCase().includes('hyderabad') ? 'HYD' : 'BLR'}
+                      </span>
+                    </div>
                     <div className="text-[11px] text-gray-500 truncate max-w-[170px]">
                       {c.sector || 'Technology'}
                     </div>
@@ -435,3 +624,4 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     </div>
   );
 };
+
