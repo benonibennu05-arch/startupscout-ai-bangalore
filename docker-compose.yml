@@ -1,0 +1,24 @@
+services:
+  startupscout-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: startupscout-ai
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
+    env_file:
+      - .env
+    volumes:
+      - startupscout-data:/app/data
+
+volumes:
+  startupscout-data:
+    driver: local

@@ -1,0 +1,31 @@
+# ==============================================================================
+# StartupScout AI - System & Runtime Requirements
+# ==============================================================================
+# This application is built with TypeScript, Node.js (Express), and React (Vite).
+# Primary package management is handled via package.json.
+#
+# Minimum System Requirements:
+# - Node.js >= 20.0.0 (Recommended: Node.js 22 LTS)
+# - npm >= 10.0.0 (or Bun >= 1.1.0)
+# - Docker >= 24.0 (for containerized deployments)
+#
+# Core Node Dependencies (mapped from package.json):
+# ------------------------------------------------------------------------------
+# @google/genai>=2.4.0         # Google Gemini AI SDK for classification & research
+# express>=4.21.2              # Production HTTP server and API proxy
+# react>=19.0.1                # Frontend UI library
+# react-dom>=19.0.1            # React DOM rendering
+# vite>=6.2.3                  # Build tool and dev server
+# tailwindcss>=4.1.14          # Utility-first CSS framework
+# cheerio>=1.2.0               # HTML parsing and web crawler scraping
+# multer>=2.2.0                # File upload handling (resumes)
+# xlsx>=0.18.5                 # Excel data export / reporting
+# lucide-react>=0.546.0        # UI icons
+# motion>=12.23.24             # Animations
+# dotenv>=17.2.3               # Environment variable loading
+#
+# Optional Python tools (if running auxiliary scraping/data processing scripts):
+# ------------------------------------------------------------------------------
+# requests>=2.31.0
+# beautifulsoup4>=4.12.3
+# python-dotenv>=1.0.1
