@@ -12,6 +12,14 @@ import { GoogleOAuthTokenData } from '../types.ts';
 
 export const EXPECTED_SENDER_EMAIL = 'tejamatta05@gmail.com';
 export const EXPECTED_SENDER_NAME = 'Teja Matta';
+
+export function getExpectedSenderEmail(): string {
+  const profile = store.getCandidateProfile();
+  const settings = store.getOutreachSettings();
+  const tokens = store.getGoogleOAuthTokens();
+  return tokens?.email || settings?.gmailAccountEmail || profile?.email || 'tejamatta05@gmail.com';
+}
+
 export const REQUIRED_GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/userinfo.email',
@@ -133,32 +141,11 @@ export class GmailService implements EmailProvider {
         updatedAt: now,
       };
 
-      // 3. Strict Verification: Authenticated email must be tejamatta05@gmail.com
-      if (authenticatedEmail !== EXPECTED_SENDER_EMAIL.toLowerCase()) {
-        logger.warn(`[GmailService] WRONG_ACCOUNT connected: ${authenticatedEmail} (Expected: ${EXPECTED_SENDER_EMAIL})`);
-        
-        // Save token record with warning state but do NOT enable outreach sending
-        store.saveGoogleOAuthTokens(tokenRecord);
-        store.updateOutreachSettings({
-          gmailConnected: false,
-          gmailAccountEmail: authenticatedEmail,
-          gmailAccessToken: null,
-          lastOAuthError: `Wrong Gmail Account. Expected: ${EXPECTED_SENDER_EMAIL}, Connected: ${authenticatedEmail}`,
-        });
-
-        return {
-          success: false,
-          email: authenticatedEmail,
-          error: `Wrong Gmail Account. Please connect: ${EXPECTED_SENDER_EMAIL} (You authorized: ${authenticatedEmail}).`,
-          errorCode: 'WRONG_GOOGLE_ACCOUNT',
-        };
-      }
-
-      // 4. Save validated tokens and update settings
+      // 3. Save validated tokens and update settings
       store.saveGoogleOAuthTokens(tokenRecord);
       store.updateOutreachSettings({
         gmailConnected: true,
-        gmailAccountEmail: EXPECTED_SENDER_EMAIL,
+        gmailAccountEmail: authenticatedEmail,
         gmailAccessToken: tokenData.access_token,
         gmailRefreshToken: tokenRecord.refreshToken || null,
         gmailTokenExpiry: expiryDate || null,
@@ -169,16 +156,16 @@ export class GmailService implements EmailProvider {
         companyId: 'SYSTEM',
         companyName: 'Gmail OAuth',
         event: 'GMAIL_CONNECTED',
-        message: `Successfully connected and verified Gmail account: ${EXPECTED_SENDER_EMAIL}.`,
+        message: `Successfully connected and verified Gmail account: ${authenticatedEmail}.`,
         stage: 'SEND_APPLICATION',
         type: 'success',
       });
 
-      logger.info(`[GmailService] Successfully connected Gmail account: ${EXPECTED_SENDER_EMAIL}`);
+      logger.info(`[GmailService] Successfully connected Gmail account: ${authenticatedEmail}`);
 
       return {
         success: true,
-        email: EXPECTED_SENDER_EMAIL,
+        email: authenticatedEmail,
         tokens: tokenRecord,
       };
     } catch (err: any) {
@@ -232,26 +219,10 @@ export class GmailService implements EmailProvider {
         updatedAt: now,
       };
 
-      if (authenticatedEmail !== EXPECTED_SENDER_EMAIL.toLowerCase()) {
-        store.saveGoogleOAuthTokens(tokenRecord);
-        store.updateOutreachSettings({
-          gmailConnected: false,
-          gmailAccountEmail: authenticatedEmail,
-          gmailAccessToken: null,
-          lastOAuthError: `Connected account ${authenticatedEmail} does not match required sender ${EXPECTED_SENDER_EMAIL}.`,
-        });
-        return {
-          success: false,
-          email: authenticatedEmail,
-          error: `Authenticated as ${authenticatedEmail}, but this pipeline is restricted to ${EXPECTED_SENDER_EMAIL}.`,
-          errorCode: 'WRONG_GOOGLE_ACCOUNT',
-        };
-      }
-
       store.saveGoogleOAuthTokens(tokenRecord);
       store.updateOutreachSettings({
         gmailConnected: true,
-        gmailAccountEmail: EXPECTED_SENDER_EMAIL,
+        gmailAccountEmail: authenticatedEmail,
         gmailAccessToken: accessToken,
         gmailTokenExpiry: expiryDate,
         lastOAuthError: null,
@@ -261,16 +232,16 @@ export class GmailService implements EmailProvider {
         companyId: 'SYSTEM',
         companyName: 'Gmail OAuth',
         event: 'GMAIL_CONNECTED',
-        message: `Successfully connected and verified Gmail account via Google Identity Services: ${EXPECTED_SENDER_EMAIL}.`,
+        message: `Successfully connected and verified Gmail account via Google Identity Services: ${authenticatedEmail}.`,
         stage: 'SEND_APPLICATION',
         type: 'success',
       });
 
-      logger.info(`[GmailService] Successfully authenticated via client token: ${EXPECTED_SENDER_EMAIL}`);
+      logger.info(`[GmailService] Successfully authenticated via client token: ${authenticatedEmail}`);
 
       return {
         success: true,
-        email: EXPECTED_SENDER_EMAIL,
+        email: authenticatedEmail,
         tokens: tokenRecord,
       };
     } catch (err: any) {
@@ -297,14 +268,6 @@ export class GmailService implements EmailProvider {
         token: null,
         error: 'Gmail Not Connected: Please connect your Gmail account before sending.',
         errorCode: 'GMAIL_NOT_CONNECTED',
-      };
-    }
-
-    if (tokens.email.toLowerCase() !== EXPECTED_SENDER_EMAIL.toLowerCase()) {
-      return {
-        token: null,
-        error: `Wrong Gmail Account: Expected ${EXPECTED_SENDER_EMAIL}, but connected to ${tokens.email}. Please disconnect and connect ${EXPECTED_SENDER_EMAIL}.`,
-        errorCode: 'WRONG_GOOGLE_ACCOUNT',
       };
     }
 
@@ -669,6 +632,7 @@ StartupScout AI Engine`;
       logger.info('[GmailService] Testing live Gmail API connectivity (users.getProfile)...');
       const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile', {
         headers: { Authorization: `Bearer ${tokenResult.token}` },
+        signal: AbortSignal.timeout(8000),
       });
 
       const profile = await response.json();
@@ -681,12 +645,11 @@ StartupScout AI Engine`;
         };
       }
 
-      if (profile.emailAddress.toLowerCase() !== EXPECTED_SENDER_EMAIL.toLowerCase()) {
+      if (!profile.emailAddress) {
         return {
           success: false,
-          email: profile.emailAddress,
-          error: `Connected account ${profile.emailAddress} does not match required sender ${EXPECTED_SENDER_EMAIL}.`,
-          errorCode: 'WRONG_GOOGLE_ACCOUNT',
+          error: 'Unable to retrieve email address from Gmail profile.',
+          errorCode: 'GMAIL_API_ERROR',
         };
       }
 
@@ -716,6 +679,7 @@ StartupScout AI Engine`;
     const tokens = store.getGoogleOAuthTokens();
     const settings = store.getOutreachSettings();
     const googleAuthConfigured = this.isAuthConfigured();
+    const expectedEmail = getExpectedSenderEmail();
 
     if (!tokens || !tokens.accessToken) {
       return {
@@ -724,25 +688,22 @@ StartupScout AI Engine`;
         provider: 'gmail',
         canSend: false,
         isExpectedAccount: false,
-        expectedEmail: EXPECTED_SENDER_EMAIL,
+        expectedEmail,
         error: settings.lastOAuthError || null,
         googleAuthConfigured,
       };
     }
 
     const email = tokens.email.toLowerCase().trim();
-    const isExpected = email === EXPECTED_SENDER_EMAIL.toLowerCase();
 
     return {
-      connected: isExpected && settings.gmailConnected,
+      connected: Boolean(settings.gmailConnected && email),
       email,
       provider: 'gmail',
-      canSend: isExpected && settings.gmailConnected,
-      isExpectedAccount: isExpected,
-      expectedEmail: EXPECTED_SENDER_EMAIL,
-      error: !isExpected
-        ? `Wrong Gmail Account: Expected ${EXPECTED_SENDER_EMAIL}, but connected to ${email}. Please disconnect and connect ${EXPECTED_SENDER_EMAIL}.`
-        : settings.lastOAuthError || null,
+      canSend: Boolean(settings.gmailConnected && email),
+      isExpectedAccount: true,
+      expectedEmail: email,
+      error: settings.lastOAuthError || null,
       googleAuthConfigured,
     };
   }
@@ -756,7 +717,7 @@ StartupScout AI Engine`;
     return Boolean(
       settings.gmailConnected &&
       tokens?.accessToken &&
-      tokens?.email?.toLowerCase() === EXPECTED_SENDER_EMAIL.toLowerCase()
+      tokens?.email
     );
   }
 

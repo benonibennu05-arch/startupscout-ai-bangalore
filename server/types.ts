@@ -94,8 +94,15 @@ export type StartupMapSource =
   | 'HYDERABAD_STARTUP_MAP'
   | 'BANGALORE'
   | 'HYDERABAD'
-  | 'BOTH';
-export type LocationScope = 'BANGALORE' | 'HYDERABAD' | 'BOTH';
+  | 'WHEREWEWORK'
+  | 'FRONTLINES_CAREER_DIRECTORY'
+  | 'OFFICIAL_COMPANY_CAREER_PAGE'
+  | 'FRONTLINES'
+  | 'BOTH'
+  | 'ALL'
+  | 'GLOBAL';
+
+export type LocationScope = 'BANGALORE' | 'HYDERABAD' | 'WHEREWEWORK' | 'FRONTLINES' | 'BOTH' | 'ALL' | 'GLOBAL';
 
 export interface CompanySource {
   id: string;
@@ -103,7 +110,63 @@ export interface CompanySource {
   sourceMap: StartupMapSource;
   sourceUrl: string;
   sourceCompanyUrl?: string;
+  sourceSlug?: string;
   discoveredAt: string;
+  lastSeenAt?: string;
+  lastChangedAt?: string;
+  contentHash?: string;
+  etag?: string | null;
+  lastModified?: string | null;
+  discoveryStatus?: 'NEW' | 'CHANGED' | 'UNCHANGED';
+}
+
+export interface SourceSyncResult {
+  source: StartupMapSource;
+  sourceUrl: string;
+  status: 'SUCCESS' | 'COMPLETED' | 'UNCHANGED' | 'FAILED' | 'PARTIAL';
+  totalDiscovered: number;
+  newCompaniesCount: number;
+  changedCompaniesCount: number;
+  unchangedCompaniesCount: number;
+  staleQueuedCount: number;
+  newCompanyIds: string[];
+  changedCompanyIds: string[];
+  queuedForResearchCount: number;
+  durationMs: number;
+  etag?: string | null;
+  contentHash?: string | null;
+  error?: string;
+  timestamp: string;
+}
+
+export interface SourceMonitoringStatus {
+  sourceMap: StartupMapSource;
+  sourceUrl: string;
+  status: 'HEALTHY' | 'DEGRADED' | 'FAILED' | 'ERROR' | 'SYNCING';
+  lastSyncAt: string | null;
+  lastSuccessfulSyncAt: string | null;
+  etag: string | null;
+  contentHash: string | null;
+  totalDiscovered: number;
+  newInLastSync: number;
+  changedInLastSync: number;
+  unchangedInLastSync: number;
+  lastHttpStatus: number;
+  lastError: string | null;
+  consecutiveErrors: number;
+  avgResponseTimeMs: number;
+}
+
+export interface ScraperHealthMetrics {
+  pagesCrawled: number;
+  pagesSucceeded: number;
+  pagesFailed: number;
+  statusCodes: Record<string, number>;
+  timeouts: number;
+  rateLimits: number;
+  retries: number;
+  avgLatencyMs: number;
+  lastCrawlAt: string | null;
 }
 
 export interface SourceMapStats {
@@ -119,11 +182,21 @@ export interface SourceMapStats {
   failed: number;
   skipped: number;
   status: 'READY' | 'RUNNING' | 'COMPLETE';
+  jobs?: number;
+  internships?: number;
+  locationsDiscovered?: number;
+  careerPagesDiscovered?: number;
+  careerPagesChecked?: number;
+  careersVisited?: number;
+  atsTypesDetected?: string[];
 }
 
 export interface DualSourceStats {
   bangalore: SourceMapStats;
   hyderabad: SourceMapStats;
+  whereWeWork?: SourceMapStats;
+  frontlines?: SourceMapStats;
+  officialCareers?: SourceMapStats;
   duplicatesAcrossMaps: number;
   combinedRawRecords: number;
   combinedUniqueCompanies: number;
@@ -136,6 +209,8 @@ export interface DualSourceStats {
   discrepancies: {
     bangaloreMissing: number;
     hyderabadMissing: number;
+    whereWeWorkMissing?: number;
+    frontlinesMissing?: number;
     combinedMissing: number;
   };
 }
@@ -154,6 +229,9 @@ export interface ResearchStatsBreakdown {
 export interface DashboardCompanyStats {
   bangalore: SourceMapStats;
   hyderabad: SourceMapStats;
+  whereWeWork?: SourceMapStats;
+  frontlines?: SourceMapStats;
+  officialCareers?: SourceMapStats;
   combined: {
     sourceRecords: number;
     uniqueCompanies: number;
@@ -486,6 +564,7 @@ export interface MonitoringSource {
   lastCheckedAt: string;
   lastChangedAt?: string;
   consecutiveUnchangedCount?: number;
+  opportunitiesFound?: number;
   status: 'ACTIVE' | 'ERROR';
 }
 
@@ -638,8 +717,11 @@ export interface Company {
   teamSize: string | null;
   linkedinUrl: string | null;
   careersUrl: string | null;
+  careersPageFound?: boolean;
   jobBoardUrl: string | null;
   atsProvider?: string | null;
+  discoveredViaSource?: string | null;
+  openingsCount?: number | null;
   status: CompanyStatus;
   researchStatus?: CompanyStatus;
   lastResearchedAt: string | null;
@@ -658,6 +740,25 @@ export interface Opportunity {
   experienceLevel: ExperienceLevel;
   location: string;
   sourceMap?: StartupMapSource;
+  source?: StartupMapSource | string;
+  sourceJobUrl?: string;
+  sourceJobId?: string;
+  discoveredViaSource?: StartupMapSource | string;
+  authoritativeSource?: string;
+  country?: string;
+  stateProvince?: string;
+  city?: string;
+  metro?: string;
+  locationRaw?: string;
+  workMode?: string;
+  isInternship?: boolean;
+  isFresherFriendly?: boolean;
+  isGraduateRole?: boolean;
+  isApprenticeship?: boolean;
+  isRemote?: boolean;
+  sourcePublishedAt?: string | null;
+  lastChangedAt?: string;
+  contentHash?: string;
   remote: RemotePolicy;
   description: string;
   responsibilities: string[];
@@ -699,10 +800,18 @@ export interface OpportunityFilter {
   minRelevance?: number;
   isFresherFriendly?: boolean;
   isInternship?: boolean;
+  isGraduateRole?: boolean;
+  isApprenticeship?: boolean;
   isNew?: boolean;
   isSaved?: boolean;
   userApplicationStatus?: string;
   search?: string;
+  source?: string;
+  sourceMap?: StartupMapSource;
+  country?: string;
+  state?: string;
+  city?: string;
+  workMode?: string;
 }
 
 export interface Contact {
@@ -821,19 +930,35 @@ export interface ResearchMetrics {
 
 export interface ResearchRun {
   id: string;
+  runId?: string; // alias for id
   startedAt: string;
   completedAt: string | null;
   status: 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'STOPPED' | 'FAILED';
   location?: LocationScope;
   sourceMap?: StartupMapSource | 'BOTH';
+  sources?: string[];
+  duration?: number; // duration in seconds
+  durationSeconds?: number;
   totalCompanies: number;
   completedCompanies: number;
   failedCompanies: number;
+  companiesDiscovered?: number;
+  companiesChecked?: number;
   jobsFound: number;
+  newJobs?: number;
+  changedJobs?: number;
+  closedJobs?: number;
   internshipsFound: number;
+  newInternships?: number;
+  changedInternships?: number;
+  closedInternships?: number;
   emailsFound: number;
-  batchType: 'TEST_10' | 'FULL_MAP' | 'CUSTOM_SELECTION' | 'RETRY_FAILED' | 'RECHECK' | 'BANGALORE_MAP' | 'HYDERABAD_MAP' | 'BOTH_MAPS';
-  mode?: ResearchMode;
+  careerPagesChecked?: number;
+  careerPagesFailed?: number;
+  locationsDiscovered?: number;
+  failures?: number;
+  batchType: 'TEST_10' | 'FULL_MAP' | 'CUSTOM_SELECTION' | 'RETRY_FAILED' | 'RECHECK' | 'BANGALORE_MAP' | 'HYDERABAD_MAP' | 'BOTH_MAPS' | 'WHEREWEWORK' | 'FRONTLINES' | 'ALL_SOURCES';
+  mode?: ResearchMode | 'MANUAL' | 'SCHEDULED';
   concurrency?: number;
 }
 

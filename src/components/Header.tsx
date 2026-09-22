@@ -68,6 +68,26 @@ export const Header: React.FC<HeaderProps> = ({
       subtitle: `Dual Ecosystem Research (${bothCount} Canonical Startups)`,
       badge: 'Both Hubs',
     },
+    WHEREWEWORK: {
+      title: 'WhereWeWork.co.in',
+      subtitle: 'wherewework.co.in (Global tech hubs, jobs & internships across all locations)',
+      badge: 'WhereWeWork.co.in',
+    },
+    FRONTLINES: {
+      title: 'Frontlines Media Directory',
+      subtitle: 'frontlinesmedia.in (302 Company Career Directory & Official Pages)',
+      badge: 'Frontlines Media',
+    },
+    ALL: {
+      title: 'All Startup Maps & Directories',
+      subtitle: `Universal Startup Intelligence (${bothCount} Total Startups)`,
+      badge: 'All Sources',
+    },
+    GLOBAL: {
+      title: 'Global Opportunities',
+      subtitle: 'Jobs & Internships across all sources and discovered locations worldwide',
+      badge: 'Global',
+    },
   };
 
   return (

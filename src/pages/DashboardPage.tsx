@@ -23,6 +23,7 @@ import { ResearchEvent, Opportunity, Company, Contact, LocationScope } from '../
 import { StatCard } from '../components/StatCard';
 import { ResearchLiveCard } from '../components/ResearchLiveCard';
 import { NavTab } from '../components/Sidebar';
+import { getSourceBadge } from '../utils/sourceBadges';
 
 interface DashboardPageProps {
   queueStatus: QueueStatusResponse | null;
@@ -63,12 +64,19 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 }) => {
   const stats = queueStatus?.stats as any;
   const companyStats = stats?.companyStats;
+  const sourceStats = stats?.sourceStats || companyStats;
 
-  const blrStored = companyStats?.bangalore?.stored ?? (selectedLocation === 'BANGALORE' ? (stats?.totalCompanies || 0) : 0);
-  const blrResearched = companyStats?.bangalore?.researched ?? (selectedLocation === 'BANGALORE' ? (stats?.researchedCompanies || 0) : 0);
+  const blrSrc = sourceStats?.bangalore || companyStats?.bangalore;
+  const hydSrc = sourceStats?.hyderabad || companyStats?.hyderabad;
+  const wwwSrc = sourceStats?.whereWeWork || companyStats?.whereWeWork;
+  const flmSrc = sourceStats?.frontlines || companyStats?.frontlines;
+  const offSrc = sourceStats?.officialCareers || companyStats?.officialCareers;
 
-  const hydStored = companyStats?.hyderabad?.stored ?? (selectedLocation === 'HYDERABAD' ? (stats?.totalCompanies || 0) : 0);
-  const hydResearched = companyStats?.hyderabad?.researched ?? (selectedLocation === 'HYDERABAD' ? (stats?.researchedCompanies || 0) : 0);
+  const blrStored = blrSrc?.stored ?? (selectedLocation === 'BANGALORE' ? (stats?.totalCompanies || 0) : 0);
+  const blrResearched = blrSrc?.researched ?? (selectedLocation === 'BANGALORE' ? (stats?.researchedCompanies || 0) : 0);
+
+  const hydStored = hydSrc?.stored ?? (selectedLocation === 'HYDERABAD' ? (stats?.totalCompanies || 0) : 0);
+  const hydResearched = hydSrc?.researched ?? (selectedLocation === 'HYDERABAD' ? (stats?.researchedCompanies || 0) : 0);
 
   const bothStored = companyStats?.combined?.stored ?? (selectedLocation === 'BOTH' ? (stats?.totalCompanies || 0) : (blrStored + hydStored));
   const bothResearched = companyStats?.combined?.researched ?? (selectedLocation === 'BOTH' ? (stats?.researchedCompanies || 0) : (blrResearched + hydResearched));
@@ -92,128 +100,311 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       sourceUrl: 'https://www.bangalorestartupmap.com/ & https://www.hyderabadstartupsmap.lol/',
       count: `${bothStored} Total Startups in DB (${bothResearched} Researched)`,
     },
+    WHEREWEWORK: {
+      title: 'WhereWeWork.co.in Hubs',
+      subtitle: 'Official source: wherewework.co.in (All discoverable locations, jobs & internships)',
+      sourceUrl: 'https://wherewework.co.in/',
+      count: 'Global Tech Hubs & Live Openings',
+    },
+    FRONTLINES: {
+      title: 'Frontlines Media Directory',
+      subtitle: 'Official source: frontlinesmedia.in (302 Company Career Directory & Official Career Pages)',
+      sourceUrl: 'https://frontlinesmedia.in/302-company-career-pages/',
+      count: '302 Verified Company Career Pages',
+    },
+    ALL: {
+      title: 'All Opportunity Sources',
+      subtitle: 'Unified intelligence across Bangalore Map, Hyderabad Map, WhereWeWork.co.in, and Frontlines Media',
+      sourceUrl: 'Multi-Source Intelligence',
+      count: `${bothStored} Total Startups in DB`,
+    },
+    GLOBAL: {
+      title: 'Global Opportunities',
+      subtitle: 'Live opportunities across all discoverable cities, tech hubs, and verified official career pages',
+      sourceUrl: 'Worldwide Intelligence',
+      count: `${bothStored} Total Startups in DB`,
+    },
   };
 
   const currentLoc = locationDetails[selectedLocation];
 
   return (
     <div id="dashboard-page" className="space-y-6">
-      {/* Startup Map Source Selector Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-        {/* Bangalore Map Card */}
-        <div
-          onClick={() => onLocationChange('BANGALORE')}
-          className={`cursor-pointer rounded-xl p-4 transition-all border flex flex-col justify-between ${
-            selectedLocation === 'BANGALORE'
-              ? 'bg-blue-50/80 border-blue-500 ring-2 ring-blue-500/20 shadow-xs'
-              : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50/50'
-          }`}
-        >
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
-                BLR
-              </div>
-              <div>
-                <h3 className="text-xs font-bold text-gray-900">Bangalore Startup Map</h3>
-                <a
-                  href="https://www.bangalorestartupmap.com/"
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-[11px] text-blue-600 hover:underline flex items-center gap-1 font-medium"
-                >
-                  bangalorestartupmap.com <ExternalLink className="w-2.5 h-2.5" />
-                </a>
-              </div>
-            </div>
-            {selectedLocation === 'BANGALORE' && (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-600 text-white">
-                ACTIVE
-              </span>
-            )}
+      {/* Multi-Source Architectural Metric Cards */}
+      <div>
+        <div className="flex items-center justify-between pb-2 mb-3">
+          <div>
+            <h2 className="text-sm font-bold text-gray-900 tracking-tight">
+              Verified Opportunity Sources
+            </h2>
+            <p className="text-xs text-gray-500 font-medium">
+              Real-time database counts per source — Bangalore & Hyderabad maps, WhereWeWork.co.in, Frontlines Media & Official Portals
+            </p>
           </div>
-          <div className="mt-3 pt-2.5 border-t border-gray-100 flex items-center justify-between text-xs text-gray-600">
-            <span className="font-semibold">{blrStored} Tech Startups</span>
-            <span className="text-[11px] font-medium text-gray-500">
-              {blrResearched > 0 ? `${blrResearched} Researched` : 'Silicon Valley of India'}
-            </span>
-          </div>
-        </div>
-
-        {/* Hyderabad Map Card */}
-        <div
-          onClick={() => onLocationChange('HYDERABAD')}
-          className={`cursor-pointer rounded-xl p-4 transition-all border flex flex-col justify-between ${
-            selectedLocation === 'HYDERABAD'
-              ? 'bg-indigo-50/80 border-indigo-500 ring-2 ring-indigo-500/20 shadow-xs'
-              : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50/50'
-          }`}
-        >
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
-                HYD
-              </div>
-              <div>
-                <h3 className="text-xs font-bold text-gray-900">Hyderabad Startups Map</h3>
-                <a
-                  href="https://www.hyderabadstartupsmap.lol/"
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-[11px] text-indigo-600 hover:underline flex items-center gap-1 font-medium"
-                >
-                  hyderabadstartupsmap.lol <ExternalLink className="w-2.5 h-2.5" />
-                </a>
-              </div>
-            </div>
-            {selectedLocation === 'HYDERABAD' && (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-600 text-white">
-                ACTIVE
-              </span>
-            )}
-          </div>
-          <div className="mt-3 pt-2.5 border-t border-gray-100 flex items-center justify-between text-xs text-gray-600">
-            <span className="font-semibold">{hydStored} Tech Startups</span>
-            <span className="text-[11px] font-medium text-gray-500">
-              {hydResearched > 0 ? `${hydResearched} Researched` : 'HITEC City & Cyberabad Hub'}
-            </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => onLocationChange('BANGALORE')}
+              className={`px-2.5 py-1 text-xs font-semibold rounded-lg border transition ${
+                selectedLocation === 'BANGALORE'
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              Bangalore
+            </button>
+            <button
+              onClick={() => onLocationChange('HYDERABAD')}
+              className={`px-2.5 py-1 text-xs font-semibold rounded-lg border transition ${
+                selectedLocation === 'HYDERABAD'
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              Hyderabad
+            </button>
+            <button
+              onClick={() => onLocationChange('WHEREWEWORK')}
+              className={`px-2.5 py-1 text-xs font-semibold rounded-lg border transition ${
+                selectedLocation === 'WHEREWEWORK'
+                  ? 'bg-teal-600 text-white border-teal-600 shadow-xs'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              WhereWeWork
+            </button>
+            <button
+              onClick={() => onLocationChange('FRONTLINES')}
+              className={`px-2.5 py-1 text-xs font-semibold rounded-lg border transition ${
+                selectedLocation === 'FRONTLINES'
+                  ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              Frontlines
+            </button>
+            <button
+              onClick={() => onLocationChange('BOTH')}
+              className={`px-2.5 py-1 text-xs font-semibold rounded-lg border transition ${
+                selectedLocation === 'BOTH'
+                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              Both Hubs
+            </button>
           </div>
         </div>
 
-        {/* Combined Dual Hubs Card */}
-        <div
-          onClick={() => onLocationChange('BOTH')}
-          className={`cursor-pointer rounded-xl p-4 transition-all border flex flex-col justify-between ${
-            selectedLocation === 'BOTH'
-              ? 'bg-emerald-50/80 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs'
-              : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50/50'
-          }`}
-        >
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
-                <Globe className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="text-xs font-bold text-gray-900">Both Startup Maps</h3>
-                <span className="text-[11px] text-emerald-700 font-medium">
-                  Bangalore + Hyderabad Combined
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+          {/* 1. Bangalore Startup Map Card */}
+          <div
+            onClick={() => onLocationChange('BANGALORE')}
+            className={`cursor-pointer rounded-xl p-4 transition-all border flex flex-col justify-between ${
+              selectedLocation === 'BANGALORE'
+                ? 'bg-blue-50/90 border-blue-500 ring-2 ring-blue-500/20 shadow-xs'
+                : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50/50'
+            }`}
+          >
+            <div>
+              <div className="flex items-start justify-between gap-1 mb-2">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                    BLR
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-gray-900 leading-tight">Bangalore Startup Map</h3>
+                    <a
+                      href="https://www.bangalorestartupmap.com/"
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-[10px] text-blue-600 hover:underline flex items-center gap-0.5 font-medium"
+                    >
+                      bangalorestartupmap.com <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                </div>
+                <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-extrabold ${
+                  blrSrc?.status === 'RUNNING' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                }`}>
+                  {blrSrc?.status || 'READY'}
                 </span>
               </div>
+              <div className="text-lg font-black text-gray-900 mt-1">
+                {blrSrc?.stored || blrStored} <span className="text-xs font-medium text-gray-500">Startups</span>
+              </div>
             </div>
-            {selectedLocation === 'BOTH' && (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-600 text-white">
-                ACTIVE
-              </span>
-            )}
+            <div className="mt-3 pt-2 border-t border-gray-100 grid grid-cols-2 gap-1 text-[11px] text-gray-600">
+              <div>Jobs: <strong className="text-gray-900 font-bold">{blrSrc?.jobs || 0}</strong></div>
+              <div>Interns: <strong className="text-gray-900 font-bold">{blrSrc?.internships || 0}</strong></div>
+            </div>
           </div>
-          <div className="mt-3 pt-2.5 border-t border-gray-100 flex items-center justify-between text-xs text-gray-600">
-            <span className="font-semibold">{bothStored} Canonical Startups</span>
-            <span className="text-[11px] font-medium text-gray-500">
-              {bothResearched > 0 ? `${bothResearched} Researched` : 'Full Dual Pipeline'}
-            </span>
+
+          {/* 2. Hyderabad Startup Map Card */}
+          <div
+            onClick={() => onLocationChange('HYDERABAD')}
+            className={`cursor-pointer rounded-xl p-4 transition-all border flex flex-col justify-between ${
+              selectedLocation === 'HYDERABAD'
+                ? 'bg-indigo-50/90 border-indigo-500 ring-2 ring-indigo-500/20 shadow-xs'
+                : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50/50'
+            }`}
+          >
+            <div>
+              <div className="flex items-start justify-between gap-1 mb-2">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                    HYD
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-gray-900 leading-tight">Hyderabad Startup Map</h3>
+                    <a
+                      href="https://www.hyderabadstartupsmap.lol/"
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-[10px] text-indigo-600 hover:underline flex items-center gap-0.5 font-medium"
+                    >
+                      hyderabadstartupsmap.lol <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                </div>
+                <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-extrabold ${
+                  hydSrc?.status === 'RUNNING' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                }`}>
+                  {hydSrc?.status || 'READY'}
+                </span>
+              </div>
+              <div className="text-lg font-black text-gray-900 mt-1">
+                {hydSrc?.stored || hydStored} <span className="text-xs font-medium text-gray-500">Startups</span>
+              </div>
+            </div>
+            <div className="mt-3 pt-2 border-t border-gray-100 grid grid-cols-2 gap-1 text-[11px] text-gray-600">
+              <div>Jobs: <strong className="text-gray-900 font-bold">{hydSrc?.jobs || 0}</strong></div>
+              <div>Interns: <strong className="text-gray-900 font-bold">{hydSrc?.internships || 0}</strong></div>
+            </div>
+          </div>
+
+          {/* 3. WhereWeWork.co.in Card */}
+          <div
+            onClick={() => onLocationChange('WHEREWEWORK')}
+            className={`cursor-pointer rounded-xl p-4 transition-all border flex flex-col justify-between ${
+              selectedLocation === 'WHEREWEWORK'
+                ? 'bg-teal-50/90 border-teal-500 ring-2 ring-teal-500/20 shadow-xs'
+                : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50/50'
+            }`}
+          >
+            <div>
+              <div className="flex items-start justify-between gap-1 mb-2">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-7 h-7 rounded-lg bg-teal-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                    WWW
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-gray-900 leading-tight">WhereWeWork.co.in</h3>
+                    <a
+                      href="https://wherewework.co.in/"
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-[10px] text-teal-700 hover:underline flex items-center gap-0.5 font-medium"
+                    >
+                      wherewework.co.in <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                </div>
+                <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-extrabold ${
+                  wwwSrc?.status === 'RUNNING' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                }`}>
+                  {wwwSrc?.status || 'READY'}
+                </span>
+              </div>
+              <div className="text-lg font-black text-gray-900 mt-1">
+                {wwwSrc?.stored || 0} <span className="text-xs font-medium text-gray-500">Companies</span>
+              </div>
+            </div>
+            <div className="mt-3 pt-2 border-t border-gray-100 flex items-center justify-between text-[11px] text-gray-600">
+              <div>Jobs: <strong className="text-gray-900 font-bold">{wwwSrc?.jobs || 0}</strong></div>
+              <div>Interns: <strong className="text-gray-900 font-bold">{wwwSrc?.internships || 0}</strong></div>
+              <div><strong className="text-teal-700 font-bold">{wwwSrc?.locationsDiscovered || 0}</strong> Hubs</div>
+            </div>
+          </div>
+
+          {/* 4. Frontlines Media Directory Card */}
+          <div
+            onClick={() => onLocationChange('FRONTLINES')}
+            className={`cursor-pointer rounded-xl p-4 transition-all border flex flex-col justify-between ${
+              selectedLocation === 'FRONTLINES'
+                ? 'bg-amber-50/90 border-amber-500 ring-2 ring-amber-500/20 shadow-xs'
+                : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50/50'
+            }`}
+          >
+            <div>
+              <div className="flex items-start justify-between gap-1 mb-2">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-7 h-7 rounded-lg bg-amber-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                    FLM
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-gray-900 leading-tight">Frontlines Media</h3>
+                    <a
+                      href="https://frontlinesmedia.in/302-company-career-pages/"
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-[10px] text-amber-700 hover:underline flex items-center gap-0.5 font-medium"
+                    >
+                      302 Career Pages <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                </div>
+                <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-extrabold ${
+                  flmSrc?.status === 'RUNNING' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                }`}>
+                  {flmSrc?.status || 'READY'}
+                </span>
+              </div>
+              <div className="text-lg font-black text-gray-900 mt-1">
+                {flmSrc?.stored || flmSrc?.careerPagesDiscovered || 302} <span className="text-xs font-medium text-gray-500">Directory</span>
+              </div>
+            </div>
+            <div className="mt-3 pt-2 border-t border-gray-100 flex items-center justify-between text-[11px] text-gray-600">
+              <div>Discovered: <strong className="text-gray-900 font-bold">{flmSrc?.careerPagesDiscovered || 302}</strong></div>
+              <div>Checked: <strong className="text-gray-900 font-bold">{flmSrc?.careerPagesChecked || 0}</strong></div>
+            </div>
+          </div>
+
+          {/* 5. Official Company Career Pages Card */}
+          <div
+            className="rounded-xl p-4 border bg-gradient-to-br from-emerald-50/70 to-teal-50/40 border-emerald-300 flex flex-col justify-between shadow-xs"
+          >
+            <div>
+              <div className="flex items-start justify-between gap-1 mb-2">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-700 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                    ATS
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-gray-900 leading-tight">Official Career Portals</h3>
+                    <span className="text-[10px] text-emerald-800 font-semibold block">Authoritative Crawling</span>
+                  </div>
+                </div>
+                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-extrabold bg-emerald-100 text-emerald-800">
+                  {offSrc?.status || 'READY'}
+                </span>
+              </div>
+              <div className="text-lg font-black text-emerald-950 mt-1">
+                {offSrc?.careersVisited || 0} <span className="text-xs font-medium text-gray-500">Visited</span>
+              </div>
+            </div>
+            <div className="mt-3 pt-2 border-t border-emerald-100 space-y-1 text-[11px] text-gray-700">
+              <div className="flex justify-between">
+                <span>Jobs Extracted: <strong className="font-bold text-gray-900">{offSrc?.jobs || 0}</strong></span>
+                <span>Interns: <strong className="font-bold text-gray-900">{offSrc?.internships || 0}</strong></span>
+              </div>
+              <div className="truncate text-[10px] text-emerald-900 font-medium">
+                ATS: {offSrc?.atsTypesDetected?.length ? offSrc.atsTypesDetected.slice(0, 3).join(', ') : 'Greenhouse, Lever, Ashby, Keka'}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -492,15 +683,21 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-bold text-gray-900">{opp.title}</span>
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                          opp.location?.toLowerCase().includes('hyderabad')
-                            ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                            : 'bg-blue-50 text-blue-700 border border-blue-200'
-                        }`}
-                      >
-                        {opp.location?.toLowerCase().includes('hyderabad') ? 'Hyderabad' : 'Bangalore'}
-                      </span>
+                      {(() => {
+                        const badge = getSourceBadge(opp);
+                        return (
+                          <a
+                            href={badge.url}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            onClick={(e) => e.stopPropagation()}
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border flex items-center gap-1 hover:underline ${badge.style}`}
+                          >
+                            {badge.label}
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        );
+                      })()}
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                           opp.type === 'INTERNSHIP'
@@ -568,13 +765,20 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   <div>
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs font-bold text-gray-900">{c.name}</span>
-                      <span className={`px-1.5 py-0.2 rounded-xs text-[9px] font-bold ${
-                        (c as any).sourceMap === 'HYDERABAD' || c.location?.toLowerCase().includes('hyderabad')
-                          ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                          : 'bg-blue-50 text-blue-700 border border-blue-200'
-                      }`}>
-                        {(c as any).sourceMap === 'HYDERABAD' || c.location?.toLowerCase().includes('hyderabad') ? 'HYD' : 'BLR'}
-                      </span>
+                      {(() => {
+                        const badge = getSourceBadge(c as any);
+                        return (
+                          <a
+                            href={badge.url}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            onClick={(e) => e.stopPropagation()}
+                            className={`px-1.5 py-0.2 rounded-xs text-[9px] font-bold border flex items-center gap-0.5 hover:underline ${badge.style}`}
+                          >
+                            {badge.label.replace(' Startup Map', ' Map').replace('.co.in', '')}
+                          </a>
+                        );
+                      })()}
                     </div>
                     <div className="text-[11px] text-gray-500 truncate max-w-[170px]">
                       {c.sector || 'Technology'}

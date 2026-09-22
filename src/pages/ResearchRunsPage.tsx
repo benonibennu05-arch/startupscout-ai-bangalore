@@ -7,20 +7,22 @@ export const ResearchRunsPage: React.FC = () => {
   const [runs, setRuns] = useState<ResearchRun[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const fetchRuns = async () => {
-    setLoading(true);
+  const fetchRuns = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const data = await api.getRuns();
-      setRuns(data || []);
+      setRuns(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error(e);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
     fetchRuns();
+    const interval = setInterval(() => fetchRuns(true), 3000);
+    return () => clearInterval(interval);
   }, []);
 
   return (
@@ -63,12 +65,19 @@ export const ResearchRunsPage: React.FC = () => {
                     <History className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="text-xs font-bold text-gray-900">
-                      Run Type: <span className="text-blue-700">{run.runType}</span>
+                    <div className="text-xs font-bold text-gray-900 flex items-center gap-2">
+                      <span>Batch: <span className="text-blue-700">{run.batchType || (run as any).runType || 'RESEARCH_RUN'}</span></span>
+                      {run.location && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-gray-100 text-gray-600 font-semibold">{run.location}</span>
+                      )}
+                      {run.mode && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-50 text-blue-700 font-semibold">{run.mode}</span>
+                      )}
                     </div>
-                    <div className="text-[11px] text-gray-500">
+                    <div className="text-[11px] text-gray-500 mt-0.5">
                       Started: {new Date(run.startedAt).toLocaleString()}
                       {run.completedAt && ` • Finished: ${new Date(run.completedAt).toLocaleString()}`}
+                      {run.durationSeconds ? ` • (${run.durationSeconds}s)` : ''}
                     </div>
                   </div>
                 </div>

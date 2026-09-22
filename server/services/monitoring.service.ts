@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { store } from '../database/store.ts';
 import { Company, MonitoringRun, MonitoringSource, Opportunity } from '../types.ts';
 import { companyResearchService } from './companyResearch.service.ts';
+import { sourceDiscoveryEngine } from './sourceDiscovery.service.ts';
 
 export class MonitoringService {
   private timer: NodeJS.Timeout | null = null;
@@ -31,6 +32,23 @@ export class MonitoringService {
     let contactsUpdated = 0;
 
     try {
+      // Step 1: Incremental Source Discovery across Bangalore & Hyderabad maps
+      try {
+        console.log('[MonitoringService] Checking Bangalore & Hyderabad Startup Maps for incremental updates...');
+        const syncResult = await sourceDiscoveryEngine.syncBoth({ queueResearch: false });
+        sourcesChecked += 2;
+        if (syncResult.combined.newCompaniesCount > 0) {
+          store.addNotification({
+            type: 'INFO',
+            title: `New Startups Discovered (${syncResult.combined.newCompaniesCount})`,
+            message: `Discovered ${syncResult.combined.newCompaniesCount} new startups during hourly incremental source monitoring.`,
+            priority: 'MEDIUM',
+          });
+        }
+      } catch (syncErr: any) {
+        console.error('[MonitoringService] Source map sync error:', syncErr?.message);
+      }
+
       const companies = store.getCompanies();
       if (companies.length === 0) {
         this.isRunning = false;
@@ -167,12 +185,12 @@ export class MonitoringService {
     }
   }
 
-  public startBackgroundScheduler(intervalMinutes = 30) {
+  public startBackgroundScheduler(intervalMinutes = 60) {
     if (this.timer) {
       clearInterval(this.timer);
     }
     const ms = Math.max(5, intervalMinutes) * 60 * 1000;
-    console.log(`[MonitoringService] Starting continuous background scheduler every ${intervalMinutes} minutes.`);
+    console.log(`[MonitoringService] Starting continuous background scheduler every ${intervalMinutes} minutes (1 hour).`);
     this.timer = setInterval(() => {
       this.runMonitoringCycle(5).catch((err) => {
         console.error('[MonitoringService] Background cycle error:', err);

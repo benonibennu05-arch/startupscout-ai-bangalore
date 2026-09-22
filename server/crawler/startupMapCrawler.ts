@@ -606,3 +606,5 @@ export async function crawlBangaloreStartupMap(): Promise<ScrapedStartupMapCompa
   return allDiscovered;
 }
 
+export const crawlStartupMap = crawlBangaloreStartupMap;
+

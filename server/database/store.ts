@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import {
   Company,
   CompanySource,
@@ -42,6 +43,8 @@ import {
   APPROVED_CANDIDATE_INFO,
 } from '../templates/approvedEmailTemplate.ts';
 import { isValidEmail } from '../extractors/email.extractor.ts';
+import { sqliteDb } from './sqlite.ts';
+import { logger } from '../utils/logger.ts';
 
 export function normalizeCompanyName(name: string): string {
   if (!name) return '';
@@ -76,23 +79,53 @@ export function matchesLocationScope(
   // If company object is provided, inspect sourceMap, sources, and locations
   if (company) {
     if (company.sourceMap === 'BOTH') return true;
+    if (target === 'WHEREWEWORK') {
+      if (company.sourceMap === 'WHEREWEWORK') return true;
+      if (company.sources?.some((s) => s.sourceMap === 'WHEREWEWORK')) return true;
+      if (company.companySources?.some((s) => s.sourceMap === 'WHEREWEWORK')) return true;
+    }
+    if (target === 'FRONTLINES' || target === 'FRONTLINES_CAREER_DIRECTORY') {
+      if (company.sourceMap === 'FRONTLINES_CAREER_DIRECTORY' || company.sourceMap === 'FRONTLINES') return true;
+      if (company.sources?.some((s) => s.sourceMap === 'FRONTLINES_CAREER_DIRECTORY' || s.sourceMap === 'FRONTLINES')) return true;
+      if (company.companySources?.some((s) => s.sourceMap === 'FRONTLINES_CAREER_DIRECTORY' || s.sourceMap === 'FRONTLINES')) return true;
+      if (company.discoveredViaSource?.includes('FRONTLINES')) return true;
+    }
+    if (target === 'OFFICIAL_CAREERS' || target === 'OFFICIAL_COMPANY_CAREER_PAGE') {
+      if (company.sourceMap === 'OFFICIAL_COMPANY_CAREER_PAGE') return true;
+      if (company.sources?.some((s) => s.sourceMap === 'OFFICIAL_COMPANY_CAREER_PAGE')) return true;
+      if (company.companySources?.some((s) => s.sourceMap === 'OFFICIAL_COMPANY_CAREER_PAGE')) return true;
+    }
     if (target === 'HYDERABAD') {
       if (company.sourceMap === 'HYDERABAD' || company.sourceMap === 'HYDERABAD_STARTUP_MAP') return true;
       if (company.sources?.some((s) => s.sourceMap === 'HYDERABAD' || s.sourceMap === 'HYDERABAD_STARTUP_MAP')) return true;
       if (company.companySources?.some((s) => s.sourceMap === 'HYDERABAD' || s.sourceMap === 'HYDERABAD_STARTUP_MAP')) return true;
-      if (company.locations?.some((l) => l.toLowerCase().includes('hyderabad') || l.toLowerCase().includes('secunderabad'))) return true;
+      if (company.locations?.some((l) => {
+        const lower = l.toLowerCase();
+        return lower.includes('hyderabad') || lower.includes('secunderabad') || lower.includes('hitec') || lower.includes('gachibowli') || lower.includes('madhapur') || lower.includes('kondapur') || lower.includes('financial district');
+      })) return true;
     }
     if (target === 'BANGALORE') {
       if (company.sourceMap === 'BANGALORE' || company.sourceMap === 'BANGALORE_STARTUP_MAP') return true;
       if (company.sources?.some((s) => s.sourceMap === 'BANGALORE' || s.sourceMap === 'BANGALORE_STARTUP_MAP')) return true;
       if (company.companySources?.some((s) => s.sourceMap === 'BANGALORE' || s.sourceMap === 'BANGALORE_STARTUP_MAP')) return true;
-      if (company.locations?.some((l) => l.toLowerCase().includes('bangalore') || l.toLowerCase().includes('bengaluru'))) return true;
+      if (company.locations?.some((l) => {
+        const lower = l.toLowerCase();
+        return lower.includes('bangalore') || lower.includes('bengaluru') || lower.includes('koramangala') || lower.includes('indiranagar') || lower.includes('whitefield') || lower.includes('hsr');
+      })) return true;
     }
   }
 
   const loc = (locationStr || '').toLowerCase();
   if (target.includes('HYD')) {
-    return loc.includes('hyderabad') || loc.includes('secunderabad') || loc.includes('hitec') || loc.includes('gachibowli');
+    return (
+      loc.includes('hyderabad') ||
+      loc.includes('secunderabad') ||
+      loc.includes('hitec') ||
+      loc.includes('gachibowli') ||
+      loc.includes('madhapur') ||
+      loc.includes('kondapur') ||
+      loc.includes('financial district')
+    );
   }
   if (target.includes('BANG') || target.includes('BLR')) {
     return (
@@ -100,14 +133,22 @@ export function matchesLocationScope(
       loc.includes('bengaluru') ||
       loc.includes('koramangala') ||
       loc.includes('indiranagar') ||
-      (!loc.includes('hyderabad') && !loc.includes('secunderabad'))
+      loc.includes('whitefield') ||
+      loc.includes('hsr')
+    );
+  }
+  if (target.includes('WHEREWEWORK')) {
+    return (
+      company?.sourceMap === 'WHEREWEWORK' ||
+      company?.sources?.some((s) => s.sourceMap === 'WHEREWEWORK') ||
+      company?.companySources?.some((s) => s.sourceMap === 'WHEREWEWORK') ||
+      loc.includes('wherewework')
     );
   }
   return true;
 }
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
-const DB_FILE = path.join(DATA_DIR, 'database.json');
 
 export interface DatabaseSchema {
   companies: Company[];
@@ -125,7 +166,7 @@ export interface DatabaseSchema {
   candidate_profile: CandidateProfile;
   email_provider_config: EmailProviderConfig;
   google_oauth_tokens?: GoogleOAuthTokenData | null;
-  oauth_states?: Record<string, { createdAt: number; redirectUrl?: string }>;
+  oauth_states?: Record<string, { createdAt: number; redirectUrl?: string; redirectUri?: string }>;
   research_runs: ResearchRun[];
   research_errors: ResearchError[];
   research_events: ResearchEvent[];
@@ -257,169 +298,9 @@ const DEFAULT_SETTINGS: UserSettings = {
   geminiTemperature: 0.2,
 };
 
-// Seed initial prominent real Bangalore startups from Bangalore Startup Map for instant readiness
-const INITIAL_SEED_COMPANIES: Partial<Company>[] = [
-  {
-    name: 'Hasura',
-    startupMapUrl: 'https://www.bangalorestartupmap.com/companies/hasura',
-    officialWebsite: 'https://hasura.io',
-    description: 'Instant GraphQL & REST APIs on your data with fine-grained access control.',
-    sector: 'Developer Tools & Cloud',
-    category: 'Enterprise Tech',
-    tags: ['GraphQL', 'Developer Tools', 'Open Source', 'PostgreSQL'],
-    location: 'Bangalore, India',
-    foundedYear: 2018,
-    startupStage: 'Series C',
-    teamSize: '200-500',
-    linkedinUrl: 'https://www.linkedin.com/company/hasura',
-    careersUrl: 'https://hasura.io/careers',
-    jobBoardUrl: 'https://boards.greenhouse.io/hasura',
-  },
-  {
-    name: 'Postman',
-    startupMapUrl: 'https://www.bangalorestartupmap.com/companies/postman',
-    officialWebsite: 'https://www.postman.com',
-    description: 'The world’s leading API development platform used by over 30 million developers.',
-    sector: 'Developer Tools & SaaS',
-    category: 'Enterprise Software',
-    tags: ['API', 'Developer Tools', 'SaaS', 'Cloud'],
-    location: 'Bangalore, India',
-    foundedYear: 2014,
-    startupStage: 'Series D',
-    teamSize: '500-1000',
-    linkedinUrl: 'https://www.linkedin.com/company/postman-platform',
-    careersUrl: 'https://www.postman.com/company/careers',
-    jobBoardUrl: 'https://boards.greenhouse.io/postman',
-  },
-  {
-    name: 'Sarvam AI',
-    startupMapUrl: 'https://www.bangalorestartupmap.com/companies/sarvam-ai',
-    officialWebsite: 'https://www.sarvam.ai',
-    description: 'Building foundational AI models, LLMs and voice agents tailored for Indian languages.',
-    sector: 'Artificial Intelligence',
-    category: 'Generative AI & LLM',
-    tags: ['Generative AI', 'LLMs', 'NLP', 'Indic Languages', 'Voice AI'],
-    location: 'Bangalore, India',
-    foundedYear: 2023,
-    startupStage: 'Series A',
-    teamSize: '50-100',
-    linkedinUrl: 'https://www.linkedin.com/company/sarvam-ai',
-    careersUrl: 'https://www.sarvam.ai/careers',
-    jobBoardUrl: 'https://jobs.ashbyhq.com/sarvam.ai',
-  },
-  {
-    name: 'Krutrim',
-    startupMapUrl: 'https://www.bangalorestartupmap.com/companies/krutrim',
-    officialWebsite: 'https://olakrutrim.com',
-    description: "India's first AI unicorn building full-stack AI cloud infrastructure, silicon and foundational LLMs.",
-    sector: 'Artificial Intelligence',
-    category: 'AI Infrastructure',
-    tags: ['AI Cloud', 'Silicon', 'Foundation Models', 'GPU Cloud'],
-    location: 'Bangalore, India',
-    foundedYear: 2023,
-    startupStage: 'Series A',
-    teamSize: '100-250',
-    linkedinUrl: 'https://www.linkedin.com/company/olakrutrim',
-    careersUrl: 'https://olakrutrim.com/careers',
-    jobBoardUrl: 'https://careers.olakrutrim.com',
-  },
-  {
-    name: 'Razorpay',
-    startupMapUrl: 'https://www.bangalorestartupmap.com/companies/razorpay',
-    officialWebsite: 'https://razorpay.com',
-    description: 'Full-stack financial services and payments infrastructure powering millions of businesses.',
-    sector: 'FinTech',
-    category: 'Payments & Banking',
-    tags: ['FinTech', 'Payments', 'Banking', 'SaaS'],
-    location: 'Bangalore, India',
-    foundedYear: 2014,
-    startupStage: 'Series F',
-    teamSize: '2000+',
-    linkedinUrl: 'https://www.linkedin.com/company/razorpay',
-    careersUrl: 'https://razorpay.com/jobs',
-    jobBoardUrl: 'https://jobs.lever.co/razorpay',
-  },
-  {
-    name: 'CRED',
-    startupMapUrl: 'https://www.bangalorestartupmap.com/companies/cred',
-    officialWebsite: 'https://cred.club',
-    description: 'Members-only club for high-trust individuals rewarding timely credit card bill payments.',
-    sector: 'FinTech & Consumer Tech',
-    category: 'Consumer Internet',
-    tags: ['FinTech', 'Mobile App', 'Credit', 'Payments'],
-    location: 'Bangalore, India',
-    foundedYear: 2018,
-    startupStage: 'Series E',
-    teamSize: '800-1200',
-    linkedinUrl: 'https://www.linkedin.com/company/cred-club',
-    careersUrl: 'https://careers.cred.club',
-    jobBoardUrl: 'https://careers.cred.club',
-  },
-  {
-    name: 'Yellow.ai',
-    startupMapUrl: 'https://www.bangalorestartupmap.com/companies/yellow-ai',
-    officialWebsite: 'https://yellow.ai',
-    description: 'Enterprise Conversational AI & Dynamic Voice Agents automating customer support worldwide.',
-    sector: 'Artificial Intelligence & SaaS',
-    category: 'Enterprise AI',
-    tags: ['Conversational AI', 'LLMs', 'NLP', 'Customer Experience'],
-    location: 'Bangalore, India',
-    foundedYear: 2016,
-    startupStage: 'Series C',
-    teamSize: '500-1000',
-    linkedinUrl: 'https://www.linkedin.com/company/yellowdotai',
-    careersUrl: 'https://yellow.ai/careers',
-    jobBoardUrl: 'https://yellow.ai/careers',
-  },
-  {
-    name: 'Observe.AI',
-    startupMapUrl: 'https://www.bangalorestartupmap.com/companies/observe-ai',
-    officialWebsite: 'https://www.observe.ai',
-    description: 'Contact center LLM and voice intelligence platform converting customer conversations into insights.',
-    sector: 'Artificial Intelligence',
-    category: 'Voice AI & Analytics',
-    tags: ['Speech AI', 'NLP', 'Contact Center', 'LLMs'],
-    location: 'Bangalore, India',
-    foundedYear: 2017,
-    startupStage: 'Series C',
-    teamSize: '200-500',
-    linkedinUrl: 'https://www.linkedin.com/company/observe-ai',
-    careersUrl: 'https://www.observe.ai/careers',
-    jobBoardUrl: 'https://jobs.lever.co/observeai',
-  },
-  {
-    name: 'Pixis',
-    startupMapUrl: 'https://www.bangalorestartupmap.com/companies/pixis',
-    officialWebsite: 'https://pixis.ai',
-    description: 'Codeless AI infrastructure for contextual marketing optimization and autonomous growth.',
-    sector: 'Artificial Intelligence',
-    category: 'Marketing AI',
-    tags: ['AdTech', 'AI Models', 'Computer Vision', 'Reinforcement Learning'],
-    location: 'Bangalore, India',
-    foundedYear: 2018,
-    startupStage: 'Series C',
-    teamSize: '250-500',
-    linkedinUrl: 'https://www.linkedin.com/company/pixis-ai',
-    careersUrl: 'https://pixis.ai/careers',
-    jobBoardUrl: 'https://pixis.ai/careers',
-  },
-  {
-    name: 'BrowserStack',
-    startupMapUrl: 'https://www.bangalorestartupmap.com/companies/browserstack',
-    officialWebsite: 'https://www.browserstack.com',
-    description: 'Software testing platform powering over 2 million tests every day across real browsers & devices.',
-    sector: 'Developer Tools & QA',
-    category: 'Cloud Testing',
-    tags: ['DevTools', 'Cloud Testing', 'Automation', 'Infrastructure'],
-    location: 'Bangalore, India',
-    foundedYear: 2011,
-    startupStage: 'Profitable / Scaleup',
-    teamSize: '1000+',
-    linkedinUrl: 'https://www.linkedin.com/company/browserstack',
-    careersUrl: 'https://www.browserstack.com/careers',
-    jobBoardUrl: 'https://www.browserstack.com/careers',
-  },
-];
+// Production does not seed hardcoded companies. Seed companies moved to fixtures/seedCompanies.ts
+const INITIAL_SEED_COMPANIES: Partial<Company>[] = [];
+
 
 class Store {
   private db: DatabaseSchema = {
@@ -455,33 +336,47 @@ class Store {
         fs.mkdirSync(DATA_DIR, { recursive: true });
       }
 
-      if (fs.existsSync(DB_FILE)) {
-        const raw = fs.readFileSync(DB_FILE, 'utf-8');
-        const parsed = JSON.parse(raw);
-        this.db = {
-          companies: parsed.companies || [],
-          opportunities: parsed.opportunities || [],
-          contacts: parsed.contacts || [],
-          open_applications: parsed.open_applications || [],
-          applications: parsed.applications || [],
-          outreach_records: parsed.outreach_records || [],
-          outreach_settings: { ...DEFAULT_OUTREACH_SETTINGS, ...(parsed.outreach_settings || {}) },
-          sent_emails: parsed.sent_emails || [],
-          saved_jobs: parsed.saved_jobs || [],
-          monitoring_sources: parsed.monitoring_sources || [],
-          monitoring_runs: parsed.monitoring_runs || [],
-          notifications: parsed.notifications || [],
-          candidate_profile: { ...DEFAULT_CANDIDATE_PROFILE, ...(parsed.candidate_profile || {}) },
-          email_provider_config: { ...DEFAULT_EMAIL_CONFIG, ...(parsed.email_provider_config || {}) },
-          google_oauth_tokens: parsed.google_oauth_tokens || null,
-          oauth_states: parsed.oauth_states || {},
-          research_runs: parsed.research_runs || [],
-          research_errors: parsed.research_errors || [],
-          research_events: parsed.research_events || [],
-          user_settings: { ...DEFAULT_SETTINGS, ...(parsed.user_settings || {}) },
-        };
+      const sqliteCount = sqliteDb.getCompanyCount();
+      logger.info(`[Store] Hydrating store state from persistent SQLite database (${sqliteCount} companies)...`);
+      const loaded = sqliteDb.loadAll();
+      this.db = {
+        companies: loaded.companies || [],
+        opportunities: loaded.opportunities || [],
+        contacts: loaded.contacts || [],
+        open_applications: loaded.open_applications || [],
+        applications: loaded.applications || [],
+        outreach_records: loaded.outreach_records || [],
+        outreach_settings: { ...DEFAULT_OUTREACH_SETTINGS, ...(loaded.outreach_settings || {}) },
+        sent_emails: loaded.sent_emails || [],
+        saved_jobs: loaded.saved_jobs || [],
+        monitoring_sources: loaded.monitoring_sources || [],
+        monitoring_runs: loaded.monitoring_runs || [],
+        notifications: loaded.notifications || [],
+        candidate_profile: { ...DEFAULT_CANDIDATE_PROFILE, ...(loaded.candidate_profile || {}) },
+        email_provider_config: { ...DEFAULT_EMAIL_CONFIG, ...(loaded.email_provider_config || {}) },
+        google_oauth_tokens: loaded.google_oauth_tokens || null,
+        oauth_states: loaded.oauth_states || {},
+        research_runs: loaded.research_runs || [],
+        research_errors: loaded.research_errors || [],
+        research_events: loaded.research_events || [],
+        user_settings: { ...DEFAULT_SETTINGS, ...(loaded.user_settings || {}) },
+      };
 
-        const now = new Date().toISOString();
+      // Clean up zombie running runs from past restarts
+      if (this.db && this.db.research_runs) {
+        this.db.research_runs = this.db.research_runs.map((r) => {
+          if (r.status === 'RUNNING') {
+            return {
+              ...r,
+              status: 'STOPPED',
+              completedAt: r.completedAt || new Date().toISOString(),
+            };
+          }
+          return r;
+        });
+      }
+
+      const now = new Date().toISOString();
 
         // Auto-migrate opportunities to guarantee category, aiMlRelevance, personalMatchScore & fingerprint
         this.db.opportunities = this.db.opportunities.map((opp) => {
@@ -635,16 +530,11 @@ class Store {
             return r;
           });
         }
-      } else {
-        // Seed baseline
-        this.seedInitial();
-        this.saveSync();
+
+      } catch (err) {
+        logger.error(`[Store] Error initializing store: ${err}`);
       }
-    } catch (err) {
-      console.error('Error initializing store:', err);
-      this.seedInitial();
     }
-  }
 
   private seedOpenApplications() {
     const now = new Date().toISOString();
@@ -671,61 +561,8 @@ class Store {
     }
   }
 
-  private seedInitial() {
-    const now = new Date().toISOString();
-    this.db.companies = INITIAL_SEED_COMPANIES.map((c, i) => ({
-      id: `comp_${Date.now()}_${i}`,
-      name: c.name || 'Startup',
-      startupMapUrl: c.startupMapUrl || 'https://www.bangalorestartupmap.com',
-      officialWebsite: c.officialWebsite || null,
-      websiteVerified: true,
-      websiteSourceUrl: c.officialWebsite || null,
-      description: c.description || null,
-      sector: c.sector || null,
-      category: c.category || null,
-      tags: c.tags || [],
-      location: c.location || 'Bangalore, India',
-      foundedYear: c.foundedYear || 2020,
-      startupStage: c.startupStage || 'Growth',
-      teamSize: c.teamSize || '50-200',
-      linkedinUrl: c.linkedinUrl || null,
-      careersUrl: c.careersUrl || null,
-      jobBoardUrl: c.jobBoardUrl || null,
-      status: 'PENDING',
-      lastResearchedAt: null,
-      createdAt: now,
-      updatedAt: now,
-    }));
-
-    this.addEvent({
-      id: `evt_init_${Date.now()}`,
-      companyId: 'system',
-      companyName: 'StartupScout AI',
-      event: 'INITIALIZED',
-      message: `System initialized. ${this.db.companies.length} seed companies staged for Bangalore Startup Map crawling.`,
-      timestamp: now,
-      type: 'info',
-    });
-  }
-
-  private saveSync() {
-    try {
-      const tempFile = `${DB_FILE}.tmp.${Date.now()}`;
-      fs.writeFileSync(tempFile, JSON.stringify(this.db, null, 2), 'utf-8');
-      fs.renameSync(tempFile, DB_FILE);
-    } catch (err) {
-      console.error('Failed to write database file:', err);
-    }
-  }
-
-  public persist() {
-    if (!this.writeScheduled) {
-      this.writeScheduled = true;
-      setTimeout(() => {
-        this.saveSync();
-        this.writeScheduled = false;
-      }, 100);
-    }
+  public persist(): void {
+    // Single Source of Truth: All mutations are written directly to SQLite synchronously
   }
 
   // --- Companies ---
@@ -794,6 +631,22 @@ class Store {
     );
   }
 
+  public findCompanyByIdentity(identityKey: string): Company | undefined {
+    if (!identityKey) return undefined;
+    const cleanKey = identityKey.trim().toLowerCase();
+    const byName = this.getCompanyByName(identityKey);
+    if (byName) return byName;
+    return this.db.companies.find((c) => {
+      if (c.officialDomain && c.officialDomain.toLowerCase() === cleanKey) return true;
+      if (c.id === cleanKey || c.canonicalCompanyId === cleanKey) return true;
+      return false;
+    });
+  }
+
+  public addOpportunity(opp: Omit<Opportunity, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Opportunity {
+    return this.upsertOpportunity(opp);
+  }
+
   public upsertCompany(data: Partial<Company> & { name: string; sourceMap?: StartupMapSource; startupMapUrl?: string }): Company {
     const now = new Date().toISOString();
     const normName = normalizeCompanyName(data.name);
@@ -826,6 +679,7 @@ class Store {
       sourceMap: requestedSourceMap,
       sourceUrl: data.startupMapUrl || data.sourceMapUrl || (requestedSourceMap.includes('HYD') ? 'https://www.hyderabadstartupsmap.lol' : 'https://www.bangalorestartupmap.com'),
       sourceCompanyUrl: data.sourceCompanyUrl || data.startupMapUrl,
+      sourceSlug: (data as any).sourceSlug,
       discoveredAt: data.discoveredAt || now,
     };
 
@@ -852,10 +706,17 @@ class Store {
       if (hasBlr && hasHyd) {
         existing.sourceMap = 'BOTH';
         existing.location = 'Bangalore & Hyderabad, India';
+      } else if (hasBlr) {
+        existing.sourceMap = 'BANGALORE_STARTUP_MAP';
       } else if (hasHyd) {
         existing.sourceMap = 'HYDERABAD_STARTUP_MAP';
+      } else if (currentSources.some((s) => s.sourceMap === 'WHEREWEWORK') || requestedSourceMap === 'WHEREWEWORK') {
+        existing.sourceMap = 'WHEREWEWORK';
       } else {
-        existing.sourceMap = 'BANGALORE_STARTUP_MAP';
+        existing.sourceMap = requestedSourceMap;
+      }
+      if (typeof (data as any).openingsCount === 'number') {
+        existing.openingsCount = (data as any).openingsCount;
       }
 
       existing.canonicalCompanyId = existing.canonicalCompanyId || existing.id;
@@ -875,6 +736,7 @@ class Store {
         existing.status = data.status;
       }
       existing.updatedAt = now;
+      sqliteDb.upsertCompany(existing);
       this.persist();
       return existing;
     }
@@ -920,6 +782,7 @@ class Store {
     };
 
     this.db.companies.push(newCompany);
+    sqliteDb.upsertCompany(newCompany);
     this.persist();
     return newCompany;
   }
@@ -929,16 +792,49 @@ class Store {
     if (comp) {
       comp.status = status;
       comp.updatedAt = new Date().toISOString();
+      sqliteDb.upsertCompany(comp);
       this.persist();
     }
   }
 
   // --- Opportunities ---
-  public getOpportunities(filter?: OpportunityFilter & { sort?: 'relevance' | 'match' | 'newest' | 'company'; location?: LocationScope | string }): Opportunity[] {
+  public getOpportunities(filter?: OpportunityFilter & { sort?: 'relevance' | 'match' | 'newest' | 'company'; location?: LocationScope | string; sourceMap?: StartupMapSource }): Opportunity[] {
     let list = this.db.opportunities;
 
     if (filter?.location) {
-      list = list.filter((o) => matchesLocationScope(o.location, filter.location));
+      list = list.filter((o) => {
+        const comp = this.getCompany(o.companyId);
+        return (
+          matchesLocationScope(o.location, filter.location, comp) ||
+          (filter.location === 'WHEREWEWORK' && (o.sourceMap === 'WHEREWEWORK' || o.sourceType === 'ATS_BOARD'))
+        );
+      });
+    }
+    if (filter?.source || filter?.sourceMap) {
+      const srcFilter = (filter.source || filter.sourceMap) as string;
+      if (srcFilter !== 'ALL') {
+        list = list.filter((o) => {
+          const comp = this.getCompany(o.companyId);
+          const compSrc = comp?.sourceMap || comp?.discoveredViaSource || '';
+          const oppSrc = o.sourceMap || o.sourceType || '';
+          if (srcFilter === 'WHEREWEWORK') {
+            return oppSrc === 'WHEREWEWORK' || compSrc === 'WHEREWEWORK' || comp?.sources?.some((s) => s.sourceMap === 'WHEREWEWORK');
+          }
+          if (srcFilter === 'FRONTLINES' || srcFilter === 'FRONTLINES_CAREER_DIRECTORY') {
+            return oppSrc.includes('FRONTLINES') || compSrc.includes('FRONTLINES') || comp?.sources?.some((s) => s.sourceMap.includes('FRONTLINES'));
+          }
+          if (srcFilter === 'OFFICIAL_CAREERS' || srcFilter === 'OFFICIAL_COMPANY_CAREER_PAGE') {
+            return oppSrc.includes('OFFICIAL') || compSrc.includes('OFFICIAL') || comp?.sources?.some((s) => s.sourceMap.includes('OFFICIAL'));
+          }
+          if (srcFilter === 'HYDERABAD' || srcFilter === 'HYDERABAD_STARTUP_MAP') {
+            return oppSrc.includes('HYD') || compSrc.includes('HYD') || o.location?.toLowerCase().includes('hyderabad') || comp?.location?.toLowerCase().includes('hyderabad');
+          }
+          if (srcFilter === 'BANGALORE' || srcFilter === 'BANGALORE_STARTUP_MAP') {
+            return oppSrc.includes('BANG') || compSrc.includes('BANG') || o.location?.toLowerCase().includes('bangalore') || comp?.location?.toLowerCase().includes('bangalore');
+          }
+          return o.sourceMap === srcFilter;
+        });
+      }
     }
     if (filter?.companyId) {
       list = list.filter((o) => o.companyId === filter.companyId);
@@ -1046,6 +942,22 @@ class Store {
     const personalMatchScore = opp.personalMatchScore !== undefined ? opp.personalMatchScore : classification.personalMatchScore;
     const jobFingerprint = opp.jobFingerprint || generateJobFingerprint(opp.companyName, opp.title, opp.location);
 
+    const contentHash = crypto
+      .createHash('md5')
+      .update(
+        [
+          opp.title,
+          opp.description || '',
+          opp.location || '',
+          type,
+          category,
+          opp.salary || '',
+          (skills || []).join(','),
+          opp.applicationUrl || '',
+        ].join('|')
+      )
+      .digest('hex');
+
     // Deduplicate by companyId + normalized title + type OR by jobFingerprint
     const normalizedTitle = opp.title.trim().toLowerCase();
     const existing = this.db.opportunities.find(
@@ -1055,6 +967,9 @@ class Store {
     );
 
     if (existing) {
+      const isContentChanged = existing.contentHash && existing.contentHash !== contentHash;
+      const lastChangedAt = isContentChanged ? now : (existing.lastChangedAt || existing.updatedAt || now);
+
       Object.assign(existing, {
         ...opp,
         category,
@@ -1066,10 +981,14 @@ class Store {
         relevanceScore,
         personalMatchScore,
         jobFingerprint,
+        contentHash,
+        lastChangedAt,
         lastSeenAt: now,
+        status: opp.status || existing.status || 'OPEN',
         lastVerifiedAt: opp.lastVerifiedAt || now,
         updatedAt: now,
       });
+      sqliteDb.upsertOpportunity(existing);
       this.persist();
       return existing;
     }
@@ -1085,6 +1004,8 @@ class Store {
       relevanceScore,
       personalMatchScore,
       jobFingerprint,
+      contentHash,
+      lastChangedAt: now,
       isNew: true,
       firstSeenAt: opp.firstSeenAt || now,
       lastSeenAt: now,
@@ -1094,6 +1015,7 @@ class Store {
     };
 
     this.db.opportunities.push(newOpp);
+    sqliteDb.upsertOpportunity(newOpp);
     this.persist();
     return newOpp;
   }
@@ -1105,6 +1027,7 @@ class Store {
       if (verificationStatus) opp.verificationStatus = verificationStatus;
       opp.lastVerifiedAt = new Date().toISOString();
       opp.updatedAt = new Date().toISOString();
+      sqliteDb.upsertOpportunity(opp);
       this.persist();
     }
   }
@@ -1125,6 +1048,7 @@ class Store {
       existing.priority = priority;
       if (notes) existing.notes = notes;
       existing.updatedAt = now;
+      sqliteDb.upsertSavedJob(existing);
       this.persist();
       return existing;
     }
@@ -1146,6 +1070,8 @@ class Store {
     opp.userApplicationStatus = 'SAVED';
 
     this.db.saved_jobs.push(record);
+    sqliteDb.upsertSavedJob(record);
+    sqliteDb.upsertOpportunity(opp);
     this.persist();
     return record;
   }
@@ -1153,11 +1079,15 @@ class Store {
   public unsaveJob(opportunityId: string): boolean {
     const idx = this.db.saved_jobs.findIndex((s) => s.opportunityId === opportunityId);
     if (idx !== -1) {
-      this.db.saved_jobs.splice(idx, 1);
+      const removed = this.db.saved_jobs.splice(idx, 1)[0];
+      if (removed) {
+        sqliteDb.deleteSavedJob(removed.id);
+      }
       const opp = this.getOpportunity(opportunityId);
       if (opp) {
         opp.isSaved = false;
         opp.userApplicationStatus = undefined;
+        sqliteDb.upsertOpportunity(opp);
       }
       this.persist();
       return true;
@@ -1173,8 +1103,10 @@ class Store {
         const opp = this.getOpportunity(record.opportunityId);
         if (opp) {
           opp.userApplicationStatus = updates.status;
+          sqliteDb.upsertOpportunity(opp);
         }
       }
+      sqliteDb.upsertSavedJob(record);
       this.persist();
       return record;
     }
@@ -1192,6 +1124,7 @@ class Store {
     );
     if (existing) {
       Object.assign(existing, source);
+      sqliteDb.upsertMonitoringSource(existing);
       this.persist();
       return existing;
     }
@@ -1200,6 +1133,7 @@ class Store {
       id: source.id || `mon_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
     };
     this.db.monitoring_sources.push(newSource);
+    sqliteDb.upsertMonitoringSource(newSource);
     this.persist();
     return newSource;
   }
@@ -1217,6 +1151,7 @@ class Store {
     if (this.db.monitoring_runs.length > 50) {
       this.db.monitoring_runs = this.db.monitoring_runs.slice(0, 50);
     }
+    sqliteDb.addMonitoringRun(newRun);
     this.persist();
     return newRun;
   }
@@ -1237,6 +1172,7 @@ class Store {
     if (this.db.notifications.length > 100) {
       this.db.notifications = this.db.notifications.slice(0, 100);
     }
+    sqliteDb.addNotification(newNotif);
     this.persist();
     return newNotif;
   }
@@ -1375,6 +1311,7 @@ class Store {
         exactMatch: isExact,
         lastVerifiedAt: contact.lastVerifiedAt || now,
       });
+      sqliteDb.upsertContact(existing);
       this.persist();
       return existing;
     }
@@ -1404,6 +1341,7 @@ class Store {
     };
 
     this.db.contacts.push(newContact);
+    sqliteDb.upsertContact(newContact);
     this.persist();
     return newContact;
   }
@@ -1432,6 +1370,11 @@ class Store {
       batchType,
     };
     this.db.research_runs.unshift(run);
+    try {
+      sqliteDb.upsertResearchRun(run);
+    } catch (e) {
+      console.error('[Store] Error persisting research run to sqlite:', e);
+    }
     this.persist();
     return run;
   }
@@ -1440,6 +1383,11 @@ class Store {
     const run = this.getResearchRun(id);
     if (run) {
       Object.assign(run, updates);
+      try {
+        sqliteDb.upsertResearchRun(run);
+      } catch (e) {
+        console.error('[Store] Error updating research run in sqlite:', e);
+      }
       this.persist();
     }
   }
@@ -1457,6 +1405,11 @@ class Store {
       resolved: false,
     };
     this.db.research_errors.unshift(record);
+    try {
+      sqliteDb.addResearchError(record);
+    } catch (e) {
+      console.error('[Store] Error persisting research error to sqlite:', e);
+    }
     this.persist();
     return record;
   }
@@ -1554,6 +1507,7 @@ class Store {
         ...data,
         updatedAt: now,
       });
+      sqliteDb.upsertOpenApplication(existing);
       this.persist();
       return existing;
     }
@@ -1566,6 +1520,7 @@ class Store {
     };
 
     this.db.open_applications.push(newApp);
+    sqliteDb.upsertOpenApplication(newApp);
     this.persist();
     return newApp;
   }
@@ -1574,6 +1529,11 @@ class Store {
     const idx = this.db.open_applications.findIndex((a) => a.id === id);
     if (idx !== -1) {
       this.db.open_applications.splice(idx, 1);
+      try {
+        sqliteDb.getRawDb().prepare('DELETE FROM open_applications WHERE id = ?').run(id);
+      } catch (e) {
+        console.error('Error deleting open app from SQLite:', e);
+      }
       this.persist();
       return true;
     }
@@ -1652,6 +1612,7 @@ class Store {
         ...data,
         updatedAt: now,
       });
+      sqliteDb.upsertApplication(existing);
       this.persist();
       return existing;
     }
@@ -1664,6 +1625,7 @@ class Store {
     };
 
     this.db.applications.unshift(newApp);
+    sqliteDb.upsertApplication(newApp);
     this.persist();
     return newApp;
   }
@@ -1692,6 +1654,7 @@ class Store {
     if (extra?.followUpAt !== undefined) app.followUpAt = extra.followUpAt;
     if (extra?.notes !== undefined) app.notes = extra.notes;
 
+    sqliteDb.upsertApplication(app);
     this.persist();
     return app;
   }
@@ -1700,6 +1663,7 @@ class Store {
     const idx = this.db.applications.findIndex((a) => a.id === id);
     if (idx !== -1) {
       this.db.applications.splice(idx, 1);
+      sqliteDb.deleteApplication(id);
       this.persist();
       return true;
     }
@@ -1789,6 +1753,7 @@ class Store {
         recipientEmail: cleanEmail,
         updatedAt: now,
       });
+      sqliteDb.upsertOutreachRecord(existing);
       this.persist();
       return existing;
     }
@@ -1802,6 +1767,7 @@ class Store {
     };
 
     this.db.outreach_records.unshift(newRecord);
+    sqliteDb.upsertOutreachRecord(newRecord);
     this.persist();
     return newRecord;
   }
@@ -1861,6 +1827,7 @@ class Store {
     if (extra?.replyDetectedAt !== undefined) item.replyDetectedAt = extra.replyDetectedAt;
     if (extra?.threadId !== undefined) item.threadId = extra.threadId;
 
+    sqliteDb.upsertOutreachRecord(item);
     this.persist();
     return item;
   }
@@ -1870,6 +1837,7 @@ class Store {
     const idx = this.db.outreach_records.findIndex((r) => r.id === id);
     if (idx !== -1) {
       this.db.outreach_records.splice(idx, 1);
+      sqliteDb.deleteOutreachRecord(id);
       this.persist();
       return true;
     }
@@ -1882,21 +1850,26 @@ class Store {
 
   public saveGoogleOAuthTokens(tokens: GoogleOAuthTokenData): void {
     this.db.google_oauth_tokens = tokens;
+    sqliteDb.setKV('google_oauth_tokens', tokens);
     this.persist();
   }
 
   public clearGoogleOAuthTokens(): void {
     this.db.google_oauth_tokens = null;
+    sqliteDb.setKV('google_oauth_tokens', null);
     this.persist();
   }
 
-  public saveOAuthState(state: string, data?: { redirectUrl?: string }): void {
+  public saveOAuthState(state: string, data?: string | { redirectUrl?: string; redirectUri?: string }): void {
     if (!this.db.oauth_states) {
       this.db.oauth_states = {};
     }
+    const resolvedUri = typeof data === 'string' ? (data.startsWith('http') ? data : undefined) : data?.redirectUri;
+    const resolvedUrl = typeof data === 'string' ? (!data.startsWith('http') ? data : undefined) : data?.redirectUrl;
     this.db.oauth_states[state] = {
       createdAt: Date.now(),
-      redirectUrl: data?.redirectUrl,
+      redirectUrl: resolvedUrl,
+      redirectUri: resolvedUri,
     };
     // Prune stale states (> 15 mins)
     const cutoff = Date.now() - 15 * 60 * 1000;
@@ -1908,14 +1881,14 @@ class Store {
     this.persist();
   }
 
-  public consumeOAuthState(state: string): { valid: boolean; redirectUrl?: string } {
+  public consumeOAuthState(state: string): { valid: boolean; redirectUrl?: string; redirectUri?: string } {
     if (!this.db.oauth_states || !this.db.oauth_states[state]) {
       return { valid: false };
     }
     const stateData = this.db.oauth_states[state];
     delete this.db.oauth_states[state];
     this.persist();
-    return { valid: true, redirectUrl: stateData.redirectUrl };
+    return { valid: true, redirectUrl: stateData.redirectUrl, redirectUri: (stateData as any).redirectUri };
   }
 
   public getOutreachSettings(): OutreachSettings {
@@ -1927,6 +1900,7 @@ class Store {
       ...this.getOutreachSettings(),
       ...updates,
     };
+    sqliteDb.setKV('outreach_settings', this.db.outreach_settings);
     this.persist();
     return this.db.outreach_settings;
   }
@@ -2026,6 +2000,7 @@ class Store {
       ...this.getCandidateProfile(),
       ...updates,
     };
+    sqliteDb.setKV('candidate_profile', this.db.candidate_profile);
     this.persist();
     return this.db.candidate_profile;
   }
@@ -2040,6 +2015,7 @@ class Store {
       ...this.getEmailProviderConfig(),
       ...updates,
     };
+    sqliteDb.setKV('email_provider_config', this.db.email_provider_config);
     this.persist();
     return this.db.email_provider_config;
   }
@@ -2055,6 +2031,7 @@ class Store {
       id: `sent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
     };
     this.db.sent_emails.unshift(newRecord);
+    sqliteDb.upsertSentEmail(newRecord);
     this.persist();
     return newRecord;
   }
@@ -2068,6 +2045,7 @@ class Store {
     if (rec) {
       rec.followUpReminderDate = followUpReminderDate;
       if (followUpStatus) rec.followUpStatus = followUpStatus;
+      sqliteDb.upsertSentEmail(rec);
       this.persist();
       return rec;
     }
@@ -2138,6 +2116,7 @@ class Store {
       ...this.db.user_settings,
       ...updates,
     };
+    sqliteDb.setKV('user_settings', this.db.user_settings);
     this.persist();
     return this.db.user_settings;
   }
@@ -2304,23 +2283,34 @@ class Store {
 
   public getSourceStats(): DualSourceStats {
     const allCompanies = this.db.companies;
+    const allOpportunities = this.db.opportunities || [];
 
-    const blrCompanies = allCompanies.filter((c) => matchesLocationScope(c.location, 'BANGALORE', c));
-    const hydCompanies = allCompanies.filter((c) => matchesLocationScope(c.location, 'HYDERABAD', c));
+    const blrCompanies = allCompanies.filter((c) => matchesLocationScope(c.location, 'BANGALORE', c) || c.sourceMap === 'BANGALORE');
+    const hydCompanies = allCompanies.filter((c) => matchesLocationScope(c.location, 'HYDERABAD', c) || c.sourceMap === 'HYDERABAD');
+    const wwwCompanies = allCompanies.filter((c) => c.sourceMap === 'WHEREWEWORK' || c.sources?.some(s => s.sourceMap === 'WHEREWEWORK'));
+    const flmCompanies = allCompanies.filter((c) => c.sourceMap === 'FRONTLINES_CAREER_DIRECTORY' || c.sources?.some(s => s.sourceMap === 'FRONTLINES_CAREER_DIRECTORY') || c.discoveredViaSource === 'FRONTLINES_CAREER_DIRECTORY');
 
     // Calculate source map discovery counts
     let blrRaw = 0;
     let hydRaw = 0;
+    let wwwRaw = 0;
+    let flmRaw = 0;
     for (const c of allCompanies) {
       const sources = c.sources || c.companySources || [];
       const hasBlr = sources.some((s) => s.sourceMap.includes('BANGALORE')) || matchesLocationScope(c.location, 'BANGALORE', c);
       const hasHyd = sources.some((s) => s.sourceMap.includes('HYDERABAD')) || matchesLocationScope(c.location, 'HYDERABAD', c);
+      const hasWww = c.sourceMap === 'WHEREWEWORK' || sources.some((s) => s.sourceMap.includes('WHEREWEWORK'));
+      const hasFlm = c.sourceMap === 'FRONTLINES_CAREER_DIRECTORY' || sources.some((s) => s.sourceMap.includes('FRONTLINES_CAREER_DIRECTORY')) || c.discoveredViaSource === 'FRONTLINES_CAREER_DIRECTORY';
       if (hasBlr) blrRaw++;
       if (hasHyd) hydRaw++;
+      if (hasWww) wwwRaw++;
+      if (hasFlm) flmRaw++;
     }
 
     const blrDiscovered = Math.max(blrRaw, blrCompanies.length);
     const hydDiscovered = Math.max(hydRaw, hydCompanies.length);
+    const wwwDiscovered = Math.max(wwwRaw, wwwCompanies.length);
+    const flmDiscovered = Math.max(flmRaw, flmCompanies.length);
 
     const blrResearched = blrCompanies.filter((c) => c.status === 'COMPLETED').length;
     const blrProcessing = blrCompanies.filter((c) => c.status === 'PROCESSING' || c.status === 'RESEARCHING' || c.status === 'VERIFYING').length;
@@ -2334,6 +2324,56 @@ class Store {
     const hydSkipped = hydCompanies.filter((c) => c.status === 'SKIPPED').length;
     const hydQueued = Math.max(0, hydCompanies.length - (hydResearched + hydProcessing + hydFailed + hydSkipped));
 
+    const wwwResearched = wwwCompanies.filter((c) => c.status === 'COMPLETED').length;
+    const wwwProcessing = wwwCompanies.filter((c) => c.status === 'PROCESSING' || c.status === 'RESEARCHING' || c.status === 'VERIFYING').length;
+    const wwwFailed = wwwCompanies.filter((c) => c.status === 'FAILED').length;
+    const wwwSkipped = wwwCompanies.filter((c) => c.status === 'SKIPPED').length;
+    const wwwQueued = Math.max(0, wwwCompanies.length - (wwwResearched + wwwProcessing + wwwFailed + wwwSkipped));
+
+    const flmResearched = flmCompanies.filter((c) => c.status === 'COMPLETED').length;
+    const flmProcessing = flmCompanies.filter((c) => c.status === 'PROCESSING' || c.status === 'RESEARCHING' || c.status === 'VERIFYING').length;
+    const flmFailed = flmCompanies.filter((c) => c.status === 'FAILED').length;
+    const flmSkipped = flmCompanies.filter((c) => c.status === 'SKIPPED').length;
+    const flmQueued = Math.max(0, flmCompanies.length - (flmResearched + flmProcessing + flmFailed + flmSkipped));
+
+    // Calculate jobs and internships per source
+    const blrJobs = allOpportunities.filter((o) => (o.sourceMap === 'BANGALORE' || matchesLocationScope(o.location, 'BANGALORE')) && o.type !== 'INTERNSHIP' && !o.isInternship).length;
+    const blrInternships = allOpportunities.filter((o) => (o.sourceMap === 'BANGALORE' || matchesLocationScope(o.location, 'BANGALORE')) && (o.type === 'INTERNSHIP' || o.isInternship)).length;
+
+    const hydJobs = allOpportunities.filter((o) => (o.sourceMap === 'HYDERABAD' || matchesLocationScope(o.location, 'HYDERABAD')) && o.type !== 'INTERNSHIP' && !o.isInternship).length;
+    const hydInternships = allOpportunities.filter((o) => (o.sourceMap === 'HYDERABAD' || matchesLocationScope(o.location, 'HYDERABAD')) && (o.type === 'INTERNSHIP' || o.isInternship)).length;
+
+    const wwwJobs = allOpportunities.filter((o) => (o.sourceMap === 'WHEREWEWORK' || o.source === 'WHEREWEWORK' || o.discoveredViaSource === 'WHEREWEWORK') && o.type !== 'INTERNSHIP' && !o.isInternship).length;
+    const wwwInternships = allOpportunities.filter((o) => (o.sourceMap === 'WHEREWEWORK' || o.source === 'WHEREWEWORK' || o.discoveredViaSource === 'WHEREWEWORK') && (o.type === 'INTERNSHIP' || o.isInternship)).length;
+
+    // Discovered unique locations for WhereWeWork
+    const wwwLocations = new Set<string>();
+    for (const c of wwwCompanies) {
+      if (c.location) wwwLocations.add(c.location.trim().toLowerCase());
+    }
+    for (const o of allOpportunities) {
+      if (o.sourceMap === 'WHEREWEWORK' || o.source === 'WHEREWEWORK' || o.discoveredViaSource === 'WHEREWEWORK') {
+        if (o.location) wwwLocations.add(o.location.trim().toLowerCase());
+      }
+    }
+
+    // Official company career pages opportunities
+    const officialOpportunities = allOpportunities.filter((o) => o.sourceMap === 'OFFICIAL_COMPANY_CAREER_PAGE' || o.source === 'OFFICIAL_COMPANY_CAREER_PAGE' || o.authoritativeSource === 'OFFICIAL_COMPANY_CAREER_PAGE');
+    const officialJobs = officialOpportunities.filter((o) => o.type !== 'INTERNSHIP' && !o.isInternship).length;
+    const officialInternships = officialOpportunities.filter((o) => o.type === 'INTERNSHIP' || o.isInternship).length;
+
+    // Frontlines career pages stats
+    const flmCareerPagesDiscovered = flmCompanies.filter((c) => !!c.careersUrl).length;
+    const flmCareerPagesChecked = flmResearched;
+
+    // ATS types detected
+    const atsSet = new Set<string>();
+    let careersVisitedCount = 0;
+    for (const c of allCompanies) {
+      if (c.atsProvider) atsSet.add(c.atsProvider);
+      if (c.careersPageFound || c.careersUrl || c.status === 'COMPLETED') careersVisitedCount++;
+    }
+
     // Deduplication check across maps
     const duplicates = allCompanies.filter((c) => {
       const isBlr = matchesLocationScope(c.location, 'BANGALORE', c);
@@ -2342,7 +2382,7 @@ class Store {
     }).length;
 
     const totalStored = allCompanies.length;
-    const combinedRaw = blrDiscovered + hydDiscovered;
+    const combinedRaw = blrDiscovered + hydDiscovered + wwwDiscovered + flmDiscovered;
     const combinedUnique = totalStored;
 
     const bangaloreStats: SourceMapStats = {
@@ -2358,6 +2398,8 @@ class Store {
       failed: blrFailed,
       skipped: blrSkipped,
       status: blrQueued > 0 && blrResearched > 0 ? 'RUNNING' : blrQueued === 0 ? 'COMPLETE' : 'READY',
+      jobs: blrJobs,
+      internships: blrInternships,
     };
 
     const hyderabadStats: SourceMapStats = {
@@ -2373,6 +2415,62 @@ class Store {
       failed: hydFailed,
       skipped: hydSkipped,
       status: hydQueued > 0 && hydResearched > 0 ? 'RUNNING' : hydQueued === 0 ? 'COMPLETE' : 'READY',
+      jobs: hydJobs,
+      internships: hydInternships,
+    };
+
+    const whereWeWorkStats: SourceMapStats = {
+      sourceName: 'WhereWeWork.co.in',
+      sourceUrl: 'https://wherewework.co.in/',
+      rawDiscovered: wwwDiscovered,
+      uniqueCompanies: wwwCompanies.length,
+      stored: wwwCompanies.length,
+      researched: wwwResearched,
+      processing: wwwProcessing,
+      queued: wwwQueued,
+      pending: wwwQueued,
+      failed: wwwFailed,
+      skipped: wwwSkipped,
+      status: wwwQueued > 0 && wwwResearched > 0 ? 'RUNNING' : wwwQueued === 0 ? 'COMPLETE' : 'READY',
+      jobs: wwwJobs,
+      internships: wwwInternships,
+      locationsDiscovered: wwwLocations.size,
+    };
+
+    const frontlinesStats: SourceMapStats = {
+      sourceName: 'Frontlines Media',
+      sourceUrl: 'https://frontlinesmedia.in/302-company-career-pages/',
+      rawDiscovered: flmDiscovered,
+      uniqueCompanies: flmCompanies.length,
+      stored: flmCompanies.length,
+      researched: flmResearched,
+      processing: flmProcessing,
+      queued: flmQueued,
+      pending: flmQueued,
+      failed: flmFailed,
+      skipped: flmSkipped,
+      status: flmQueued > 0 && flmResearched > 0 ? 'RUNNING' : flmQueued === 0 ? 'COMPLETE' : 'READY',
+      careerPagesDiscovered: flmCareerPagesDiscovered,
+      careerPagesChecked: flmCareerPagesChecked,
+    };
+
+    const officialCareerStats: SourceMapStats = {
+      sourceName: 'Official Company Career Pages',
+      sourceUrl: 'https://wherewework.co.in/',
+      rawDiscovered: careersVisitedCount,
+      uniqueCompanies: careersVisitedCount,
+      stored: careersVisitedCount,
+      researched: careersVisitedCount,
+      processing: 0,
+      queued: 0,
+      pending: 0,
+      failed: 0,
+      skipped: 0,
+      status: 'READY',
+      careersVisited: careersVisitedCount,
+      jobs: officialJobs,
+      internships: officialInternships,
+      atsTypesDetected: Array.from(atsSet),
     };
 
     const researchedTotal = allCompanies.filter((c) => c.status === 'COMPLETED').length;
@@ -2381,10 +2479,15 @@ class Store {
 
     const bangaloreMissing = Math.max(0, blrDiscovered - blrCompanies.length);
     const hyderabadMissing = Math.max(0, hydDiscovered - hydCompanies.length);
+    const whereWeWorkMissing = Math.max(0, wwwDiscovered - wwwCompanies.length);
+    const frontlinesMissing = Math.max(0, flmDiscovered - flmCompanies.length);
 
     return {
       bangalore: bangaloreStats,
       hyderabad: hyderabadStats,
+      whereWeWork: whereWeWorkStats,
+      frontlines: frontlinesStats,
+      officialCareers: officialCareerStats,
       duplicatesAcrossMaps: duplicates,
       combinedRawRecords: combinedRaw,
       combinedUniqueCompanies: combinedUnique,
@@ -2393,11 +2496,13 @@ class Store {
       researchedTotal,
       pendingTotal,
       failedTotal,
-      isConsistent: bangaloreMissing === 0 && hyderabadMissing === 0,
+      isConsistent: bangaloreMissing === 0 && hyderabadMissing === 0 && whereWeWorkMissing === 0 && frontlinesMissing === 0,
       discrepancies: {
         bangaloreMissing,
         hyderabadMissing,
-        combinedMissing: bangaloreMissing + hyderabadMissing,
+        whereWeWorkMissing,
+        frontlinesMissing,
+        combinedMissing: bangaloreMissing + hyderabadMissing + whereWeWorkMissing + frontlinesMissing,
       },
     };
   }
@@ -2420,6 +2525,9 @@ class Store {
     return {
       bangalore: sourceStats.bangalore,
       hyderabad: sourceStats.hyderabad,
+      whereWeWork: sourceStats.whereWeWork,
+      frontlines: sourceStats.frontlines,
+      officialCareers: sourceStats.officialCareers,
       combined: {
         sourceRecords: sourceStats.combinedRawRecords,
         uniqueCompanies: sourceStats.combinedUniqueCompanies,
@@ -2501,6 +2609,17 @@ class Store {
         }
       } catch (err) {
         console.error('Error syncing Hyderabad Startup Map:', err);
+      }
+    }
+
+    if (sourceScope === 'WHEREWEWORK' || (sourceScope as string) === 'ALL') {
+      try {
+        const { whereWeWorkAdapter } = await import('../adapters/whereWeWork.adapter.ts');
+        const wwwResult = await whereWeWorkAdapter.sync({ syncJobs: true });
+        added += wwwResult.newCompaniesCount;
+        updated += wwwResult.changedCompaniesCount;
+      } catch (err) {
+        console.error('Error syncing WhereWeWork:', err);
       }
     }
 

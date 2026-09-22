@@ -39,14 +39,18 @@ export class CompanyResearchService {
     const now = new Date().toISOString();
     let geminiCalls = 0;
 
-    // Cache Check: if researched within 7 days, reuse existing unless forceRefresh is set
-    if (!options.forceRefresh && company.lastResearchedAt && company.status === 'COMPLETED') {
+    // Cache Check: if researched within 7 days and already has data, reuse existing unless forceRefresh is set
+    const existingOpps = store.getOpportunitiesForCompany(company.id);
+    const existingContacts = store.getContactsForCompany(company.id);
+    const hasData = existingOpps.length > 0 || existingContacts.length > 0;
+
+    if (!options.forceRefresh && company.lastResearchedAt && company.status === 'COMPLETED' && hasData) {
       const daysSince = (Date.now() - new Date(company.lastResearchedAt).getTime()) / (1000 * 60 * 60 * 24);
       if (daysSince < 7) {
         return {
           company,
-          opportunities: store.getOpportunitiesForCompany(company.id),
-          contacts: store.getContactsForCompany(company.id),
+          opportunities: existingOpps,
+          contacts: existingContacts,
           openApplications: store.getOpenApplications({ companyId: company.id }),
           durationMs: Date.now() - startTime,
           geminiCalls: 0,

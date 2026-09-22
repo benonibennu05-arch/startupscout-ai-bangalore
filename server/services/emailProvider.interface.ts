@@ -30,10 +30,12 @@ export interface EmailSendResult {
 export interface EmailAccountInfo {
   connected: boolean;
   email: string | null;
+  name?: string | null;
   provider: 'gmail';
   canSend: boolean;
   isExpectedAccount: boolean;
   expectedEmail: string;
+  tokenExpired?: boolean;
   error?: string | null;
   scopes?: string[];
   googleAuthConfigured?: boolean;

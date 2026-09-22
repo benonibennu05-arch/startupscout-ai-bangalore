@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { Opportunity } from '../types';
 import { api } from '../services/api';
+import { getSourceBadge, getAtsProvider, getVerificationBadge } from '../utils/sourceBadges';
 
 interface OpportunityDetailModalProps {
   opportunity: Opportunity | null;
@@ -154,6 +155,30 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
         <div className="p-6 overflow-y-auto space-y-5">
           {/* Badges Bar */}
           <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-gray-100">
+            {(() => {
+              const badge = getSourceBadge(opp);
+              return (
+                <a
+                  href={badge.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border hover:underline ${badge.style}`}
+                >
+                  {badge.label}
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              );
+            })()}
+            {(() => {
+              const ats = getAtsProvider(opp);
+              if (!ats) return null;
+              return (
+                <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-cyan-50 text-cyan-800 border border-cyan-200 flex items-center gap-1">
+                  <Layers className="w-3 h-3" />
+                  {ats} ATS
+                </span>
+              );
+            })()}
             <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800">
               {opp.category || 'SOFTWARE'}
             </span>
@@ -177,17 +202,39 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
                 💰 {opp.salary}
               </span>
             )}
-            <span
-              className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${
-                opp.verificationStatus === 'VERIFIED'
-                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                  : 'bg-gray-100 text-gray-600 border border-gray-200'
-              }`}
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              {opp.verificationStatus}
-            </span>
+            {(() => {
+              const vBadge = getVerificationBadge(opp.verificationStatus);
+              return (
+                <span
+                  className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border ${vBadge.style}`}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  {vBadge.label}
+                </span>
+              );
+            })()}
           </div>
+
+          {/* Source Provenance Row */}
+          {(() => {
+            const badge = getSourceBadge(opp);
+            return (
+              <div className="flex items-center justify-between text-xs bg-gray-50 px-3.5 py-2 rounded-xl border border-gray-200/80">
+                <div className="flex items-center gap-2 text-gray-600">
+                  <span className="font-semibold text-gray-900">Source Provenance:</span>
+                  <span className="font-medium text-gray-700">{badge.provenance}</span>
+                </div>
+                <a
+                  href={badge.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="text-blue-600 hover:text-blue-700 font-semibold flex items-center gap-1"
+                >
+                  View Original Listing <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+            );
+          })()}
 
           {/* Status & Profile Match Bar */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

@@ -10,6 +10,19 @@ export default defineConfig({
   server: {
     port: 3000,
     host: '0.0.0.0',
+    watch: {
+      ignored: [
+        '**/data/**',
+        '**/backups/**',
+        '**/fixtures/**',
+        '**/*.db*',
+        '**/*.db-wal*',
+        '**/*.db-shm*',
+        '**/*.sqlite*',
+        '**/database.json*',
+        '**/server/**',
+      ],
+    },
   },
   build: {
     target: 'esnext',

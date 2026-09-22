@@ -1,14 +1,15 @@
 import * as cheerio from 'cheerio';
 import { Company, StartupMapSource } from '../types.ts';
-import { store } from '../database/store.ts';
+import { store, normalizeCompanyName, extractOfficialDomain } from '../database/store.ts';
 import { crawlerService } from './crawler.service.ts';
 import { extractCompanyFromStartupMapPage } from '../extractors/company.extractor.ts';
 import { BANGALORE_STARTUP_MAP_DIRECTORY, ScrapedStartupMapCompany, crawlBangaloreStartupMap } from '../crawler/startupMapCrawler.ts';
 import { HYDERABAD_STARTUP_MAP_DIRECTORY, crawlHyderabadStartupMap } from '../crawler/hyderabadStartupMapCrawler.ts';
+import { whereWeWorkAdapter } from '../adapters/whereWeWork.adapter.ts';
 import { logger } from '../utils/logger.ts';
 
 const BANGALORE_STARTING_URL = 'https://www.bangalorestartupmap.com/';
-const HYDERABAD_STARTING_URL = 'https://www.hyderabadstartupsmap.lol/';
+const HYDERABAD_STARTING_URL = 'https://hyderabadstartupsmap.lol/';
 
 export class StartupMapService {
   /**
@@ -98,11 +99,35 @@ export class StartupMapService {
   }
 
   /**
+   * Ingest WhereWeWork startups and live jobs/internships
+   */
+  public async discoverWhereWeWork(): Promise<{ discovered: number; totalStored: number }> {
+    logger.info(`Starting dynamic WhereWeWork discovery...`);
+    const result = await whereWeWorkAdapter.sync({ syncJobs: true });
+    const totalStored = store.getCompanies().length;
+
+    store.addEvent({
+      companyId: 'crawler_www',
+      companyName: 'WhereWeWork',
+      event: 'DISCOVERY_COMPLETED',
+      message: `WhereWeWork discovery complete: Indexed ${result.totalDiscovered} companies across Bangalore, Hyderabad, Pune, Gurugram & Delhi.`,
+      stage: 'DISCOVER_COMPANIES',
+      type: 'success',
+    });
+
+    return { discovered: result.totalDiscovered, totalStored };
+  }
+
+  /**
    * Crawl Startup Map(s) based on source selection
    */
-  public async discoverCompanies(source: StartupMapSource | 'BOTH' = 'BANGALORE'): Promise<{ discovered: number; totalStored: number }> {
-    if (source === 'HYDERABAD') {
+  public async discoverCompanies(source: StartupMapSource | 'BOTH' | 'ALL' = 'ALL'): Promise<{ discovered: number; totalStored: number }> {
+    if (source === 'HYDERABAD' || source === 'HYDERABAD_STARTUP_MAP') {
       return this.discoverHyderabad();
+    } else if (source === 'BANGALORE' || source === 'BANGALORE_STARTUP_MAP') {
+      return this.discoverBangalore();
+    } else if (source === 'WHEREWEWORK') {
+      return this.discoverWhereWeWork();
     } else if (source === 'BOTH') {
       const blr = await this.discoverBangalore();
       const hyd = await this.discoverHyderabad();
@@ -111,10 +136,16 @@ export class StartupMapService {
         totalStored: store.getCompanies().length,
       };
     } else {
-      return this.discoverBangalore();
+      // ALL sources
+      const blr = await this.discoverBangalore();
+      const hyd = await this.discoverHyderabad();
+      const www = await this.discoverWhereWeWork();
+      return {
+        discovered: blr.discovered + hyd.discovered + www.discovered,
+        totalStored: store.getCompanies().length,
+      };
     }
   }
 }
 
 export const startupMapService = new StartupMapService();
-

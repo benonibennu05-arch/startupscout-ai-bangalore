@@ -6,12 +6,15 @@ AI-powered startup employment intelligence platform discovering real companies, 
 
 ## Features
 
-- **Company Intelligence**: Live database of Bangalore and Hyderabad tech startups with funding stages, tech stacks, and office locations.
-- **Role & Opportunity Extraction**: Automated discovery of active tech, product, and AI jobs and internships.
-- **Public Recruiter Contacts**: Crawls verified public HR and founder contacts from career pages.
-- **Gmail OAuth 2.0 Sending Engine**: Real email delivery via official Google APIs (`gmail.send`) with customized pitches and automatic PDF resume attachments.
-- **Human-in-the-Loop Review**: Strict safeguards allowing preview, draft editing, and manual approval before sending any email.
-- **Local Data Persistence**: High-reliability file-based storage in `./data/database.json` and uploaded resumes in `./data/resumes`.
+- **Multi-Source Company Intelligence**: Continuous synchronization across Bangalore Startup Map, Hyderabad Startup Map (`https://hyderabadstartupsmap.lol/api/startups`), and WhereWeWork (`https://wherewework.co.in`) covering Bengaluru, Hyderabad, Pune, Gurugram, and Delhi NCR.
+- **Dual-Mode Research Engine**: Supports `INITIAL_FULL` mode for deep exhaustive parsing of websites, career portals, and recruitment personnel, as well as `INCREMENTAL` mode for change detection, delta updates, and rapid periodic syncs.
+- **Background Worker & Queue Engine**: Dedicated asynchronous queue (`ResearchQueue`) processing company discovery, deep web crawling, role scraping, and email verification without blocking the Express event loop.
+- **Strict Public Contact Policy**: Crawls verified public HR and founder contacts from official domains with 0% fabricated/guessed emails and full cryptographic verification status.
+- **Gmail OAuth 2.0 Sending Engine**: Real email delivery via official Google APIs (`gmail.send`) authenticated strictly with authorized sender `tejamatta05@gmail.com`, dynamic origin resolution, and automated PDF resume attachments.
+- **OAuth Diagnostic Panel**: In-app diagnostic UI in Settings showing browser origin, configured vs expected redirect URIs, OAuth environment status, copyable parameters, and account validation.
+- **Human-in-the-Loop Safeguards**: Strict review workflow allowing pitch preview, draft customization, and manual send confirmation before dispatching.
+- **Persistent Storage**: Hybrid storage with durable SQLite database and JSON serialization in `./data/startupscout.db` and `./data/database.json`.
+- **Automated Test Suite**: 23 automated tests verifying crawlers, location matching, contact policies, WhereWeWork sync, and OAuth state integrity.
 
 ---
 
@@ -181,10 +184,45 @@ docker run -d \
 
 ---
 
+## Automated Test Suite
+
+StartupScout AI includes a complete automated test suite run via Node's native test runner (`node --test` with TypeScript loader):
+
+```bash
+# Run all automated tests
+npm test
+```
+
+### Test Coverage:
+1. **Hyderabad Startup Discovery (`tests/hyderabad-discovery.test.ts`)**:
+   - Validates live endpoint consumption at `https://hyderabadstartupsmap.lol/api/startups`.
+   - Tests official domain extraction and protocol sanitization.
+   - Verifies curated tech startups directory (Darwinbox, Zenoti, HighRadius, Skyroot Aerospace, etc.).
+2. **Location Scope & Multi-Hub Matching (`tests/location-scope.test.ts`)**:
+   - Tests `matchesLocationScope` across Hyderabad, Bangalore, WhereWeWork, and Both/All scopes.
+   - Verifies neighborhood matching (Hitec City, Gachibowli, Madhapur, Financial District, Kondapur, Koramangala, Indiranagar, Whitefield, HSR).
+3. **Strict Public Contact Policy (`tests/contacts-email-policy.test.ts`)**:
+   - Verifies strict rejection of dummy, fake, or synthetic addresses (`user@example.com`, `test@test.com`).
+   - Ensures exact match verification in crawled HTML and career pages.
+   - Validates role classifications (`CAREERS`, `TALENT`, `RECRUITING`, `CAMPUS_HIRING`, `HR`, `FOUNDER`).
+4. **OAuth State & Authorized Sender (`tests/oauth-flow.test.ts`)**:
+   - Tests single-use CSRF OAuth state generation, storage, and consumption.
+   - Enforces `tejamatta05@gmail.com` as the exclusive authorized sender.
+   - Validates dynamic origin diagnostic payload format.
+5. **WhereWeWork Adapter & Jobs Sync (`tests/wherewework-sync.test.ts`)**:
+   - Validates Indian tech cities coverage (Bengaluru, Hyderabad, Pune, Gurugram, Delhi).
+   - Tests title parsing for internships vs full-time positions.
+   - Verifies adapter health reporting and monitoring status.
+
+---
+
 ## Health Check & Verification
 
 Once running, verify the backend endpoints:
 
 - **Health Check**: `GET http://localhost:3000/api/health`
 - **Gmail Status**: `GET http://localhost:3000/api/email/status`
+- **OAuth Diagnostics**: `GET http://localhost:3000/api/auth/google/diagnostic`
+- **Source Monitoring**: `GET http://localhost:3000/api/sources/status`
+- **Multi-Source Discovery**: `POST http://localhost:3000/api/sources/sync-all`
 - **Connection Test**: `POST http://localhost:3000/api/email/test-connection`

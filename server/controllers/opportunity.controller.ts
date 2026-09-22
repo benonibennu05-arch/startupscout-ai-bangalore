@@ -30,6 +30,8 @@ export class OpportunityController {
       isNew: req.query.isNew === 'true',
       isSaved: req.query.isSaved === 'true',
       userApplicationStatus: req.query.userApplicationStatus as any,
+      source: (req.query.source as string) || undefined,
+      sourceMap: (req.query.sourceMap as any) || undefined,
       search: req.query.search as string | undefined,
       sort: (req.query.sort as any) || 'relevance',
     };

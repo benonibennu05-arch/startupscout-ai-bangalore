@@ -5,6 +5,7 @@ import { apiRouter } from './server/routes/api.ts';
 import { startupMapService } from './server/services/startupMap.service.ts';
 import { store } from './server/database/store.ts';
 import { monitoringService } from './server/services/monitoring.service.ts';
+import { sqliteDb } from './server/database/sqlite.ts';
 
 dotenv.config();
 
@@ -19,10 +20,37 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api', apiRouter);
 
 async function startServer() {
+  // 1. Safe Startup Sequence - Check SQLite Database Integrity First
+  const dbHealth = sqliteDb.healthCheck();
+  if (!dbHealth.healthy) {
+    console.error('====================================================');
+    console.error('[CRITICAL] DATABASE CORRUPTED - REPAIR REQUIRED');
+    console.error(`Status: ${dbHealth.integrity}, Error: ${dbHealth.error}`);
+    console.error('[CRITICAL] Background discovery and scheduler have been disabled to prevent further corruption.');
+    console.error('====================================================');
+  } else {
+    console.log(`[Startup] SQLite database integrity check passed (${dbHealth.integrity}). Total companies: ${dbHealth.totalCompanies}, opportunities: ${dbHealth.totalOpportunities}`);
+  }
+
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        watch: {
+          ignored: [
+            '**/data/**',
+            '**/backups/**',
+            '**/fixtures/**',
+            '**/*.db*',
+            '**/*.db-wal*',
+            '**/*.db-shm*',
+            '**/*.sqlite*',
+            '**/database.json*',
+            '**/server/**',
+          ],
+        },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -37,17 +65,19 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`StartupScout AI Server active on http://0.0.0.0:${PORT} [${isProd ? 'production' : 'development'}]`);
 
-    // Dynamically index all Bangalore Startup Map entries if catalog is not yet fully populated
-    if (store.getCompanies().length < 100) {
+    // Only start background workers if database is healthy
+    if (dbHealth.healthy) {
       setTimeout(() => {
-        startupMapService.discoverCompanies().catch((err) => {
+        startupMapService.discoverCompanies('ALL').catch((err) => {
           console.warn('Initial background discovery error:', err);
         });
-      }, 500);
-    }
+      }, 1000);
 
-    // Start continuous background monitoring scheduler
-    monitoringService.startBackgroundScheduler(30);
+      // Start continuous background monitoring scheduler
+      monitoringService.startBackgroundScheduler(30);
+    } else {
+      console.warn('[Startup] Background workers halted because database is corrupted.');
+    }
   });
 }
 

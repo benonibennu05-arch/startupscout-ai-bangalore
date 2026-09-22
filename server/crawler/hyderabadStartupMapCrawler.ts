@@ -322,7 +322,7 @@ export async function crawlHyderabadStartupMap(): Promise<ScrapedStartupMapCompa
     companyId: 'crawler-hyderabad',
     companyName: 'Hyderabad Startup Map',
     event: 'DISCOVERY_STARTED',
-    message: `Initiating dynamic discovery across Hyderabad Startup Map (https://www.hyderabadstartupsmap.lol/)...`,
+    message: `Initiating dynamic discovery across Hyderabad Startup Map (https://hyderabadstartupsmap.lol/)...`,
     stage: 'DISCOVER_COMPANIES',
     type: 'info',
   });
@@ -330,79 +330,93 @@ export async function crawlHyderabadStartupMap(): Promise<ScrapedStartupMapCompa
   // Step 1: Pre-populate known high-fidelity Hyderabad directory entries
   for (const item of HYDERABAD_STARTUP_MAP_DIRECTORY) {
     const slug = item.startupMapUrl
-      .replace(/^https?:\/\/[^\/]+\/compan(ies|y)\//i, '')
+      .replace(/^https?:\/\/[^\/]+\/(compan(ies|y)|startups)\//i, '')
       .replace(/\/+$/, '')
       .toLowerCase();
     discoveredMap.set(slug, item);
   }
 
-  // Step 2: Fetch official live sitemap.xml which indexes ALL active Hyderabad startups dynamically
-  const sitemapUrls = [
-    'https://www.hyderabadstartupsmap.lol/sitemap.xml',
-    'https://hyderabadstartupsmap.lol/sitemap.xml',
-  ];
+  // Step 2: Fetch official live API endpoint which indexes ALL active Hyderabad startups with structured JSON
+  try {
+    const apiUrl = 'https://hyderabadstartupsmap.lol/api/startups';
+    const res = await fetch(apiUrl, {
+      headers: {
+        'User-Agent': 'StartupScoutAI/2.0 (Hyderabad Startup Map Crawler)',
+        'Accept': 'application/json',
+      },
+      signal: AbortSignal.timeout(12000),
+    });
 
-  for (const sitemapUrl of sitemapUrls) {
-    try {
-      const sitemapXml = await fetchHtml(sitemapUrl, 15000);
-      if (sitemapXml) {
-        // Extract all <loc> company URLs
-        const locMatches = sitemapXml.match(/https?:\/\/[^\s<>]+\/(company|startups|companies)\/[^\s<>]+/g) || [];
-        for (const fullUrl of locMatches) {
-          const cleanUrl = fullUrl.trim();
-          const slug = cleanUrl
-            .replace(/^https?:\/\/[^\/]+\/(company|startups|companies)\//i, '')
-            .replace(/\/+$/, '')
-            .toLowerCase();
-          if (slug && slug.length > 0 && !slug.includes('/') && !discoveredMap.has(slug)) {
-            const formattedName = slugToCompanyName(slug);
-            discoveredMap.set(slug, {
-              name: formattedName,
-              startupMapUrl: cleanUrl,
-              location: 'Hyderabad, India',
-            });
-          }
+    if (res.ok) {
+      const data = await res.json();
+      const items = Array.isArray(data) ? data : (data?.startups || data?.data || []);
+
+      for (const item of items) {
+        const slug = String(item.id || item.slug || '').toLowerCase().trim();
+        if (!slug) continue;
+
+        let domain: string | null = null;
+        if (item.logo && item.logo.includes('domain=')) {
+          const match = item.logo.match(/domain=([a-zA-Z0-9.-]+\.[a-z]{2,})/i);
+          if (match) domain = match[1].toLowerCase();
         }
-        if (locMatches.length > 0) {
-          break; // Successfully extracted from sitemap
-        }
+
+        const areaStr = item.area ? `${item.area}, Hyderabad, India` : (item.office ? `${item.office}, Hyderabad, India` : 'Hyderabad, India');
+        const officialWebsite = item.website || (domain ? `https://${domain}` : null);
+        const startupMapUrl = `https://hyderabadstartupsmap.lol/startups/${slug}`;
+
+        discoveredMap.set(slug, {
+          name: item.name?.trim() || slugToCompanyName(slug),
+          startupMapUrl,
+          officialWebsite,
+          description: item.description || item.tagline || null,
+          sector: item.sector || 'Technology',
+          category: item.sector || 'Technology',
+          tags: [item.sector, item.area, item.stage].filter(Boolean),
+          location: areaStr,
+          startupStage: item.stage || null,
+        });
       }
-    } catch (err) {
-      console.warn(`Failed fetching sitemap from ${sitemapUrl}:`, err);
     }
+  } catch (apiErr: any) {
+    console.warn(`[HyderabadCrawler] Failed fetching /api/startups:`, apiErr?.message);
   }
 
-  // Step 3: Fetch root homepage HTML and parse any additional links or data
-  try {
-    const rootHtml = await fetchHtml('https://www.hyderabadstartupsmap.lol/', 15000);
-    if (rootHtml) {
-      const $ = cheerio.load(rootHtml);
-      $('a[href*="/companies/"], a[href*="/company/"], a[href*="/startups/"]').each((_, el) => {
-        const href = $(el).attr('href') || '';
-        const text = $(el).text().trim();
-        const slug = href
-          .replace(/^https?:\/\/[^\/]+\/compan(ies|y)\//i, '')
-          .replace(/^\/compan(ies|y)\//i, '')
-          .replace(/^\/startups\//i, '')
-          .replace(/\/+$/, '')
-          .toLowerCase();
+  // Step 3: Fetch official live sitemap.xml as fallback
+  if (discoveredMap.size <= HYDERABAD_STARTUP_MAP_DIRECTORY.length) {
+    const sitemapUrls = [
+      'https://www.hyderabadstartupsmap.lol/sitemap.xml',
+      'https://hyderabadstartupsmap.lol/sitemap.xml',
+    ];
 
-        if (slug && !discoveredMap.has(slug)) {
-          const fullUrl = href.startsWith('http') ? href : `https://www.hyderabadstartupsmap.lol/company/${slug}`;
-          const name = text && text.length > 1 && text.length < 50 && !text.toLowerCase().includes('view all')
-            ? text
-            : slugToCompanyName(slug);
-
-          discoveredMap.set(slug, {
-            name,
-            startupMapUrl: fullUrl,
-            location: 'Hyderabad, India',
-          });
+    for (const sitemapUrl of sitemapUrls) {
+      try {
+        const sitemapXml = await fetchHtml(sitemapUrl, 15000);
+        if (sitemapXml) {
+          const locMatches = sitemapXml.match(/https?:\/\/[^\s<>]+\/(company|startups|companies)\/[^\s<>]+/g) || [];
+          for (const fullUrl of locMatches) {
+            const cleanUrl = fullUrl.trim();
+            const slug = cleanUrl
+              .replace(/^https?:\/\/[^\/]+\/(company|startups|companies)\//i, '')
+              .replace(/\/+$/, '')
+              .toLowerCase();
+            if (slug && slug.length > 0 && !slug.includes('/') && !discoveredMap.has(slug)) {
+              const formattedName = slugToCompanyName(slug);
+              discoveredMap.set(slug, {
+                name: formattedName,
+                startupMapUrl: cleanUrl,
+                location: 'Hyderabad, India',
+              });
+            }
+          }
+          if (locMatches.length > 0) {
+            break;
+          }
         }
-      });
+      } catch (err) {
+        console.warn(`Failed fetching sitemap from ${sitemapUrl}:`, err);
+      }
     }
-  } catch (e) {
-    console.warn('Parsing error on Hyderabad live map HTML:', e);
   }
 
   const allDiscovered = Array.from(discoveredMap.values());

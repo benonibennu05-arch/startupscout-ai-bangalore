@@ -97,6 +97,16 @@ export function App() {
     };
   }, [refreshDashboardData, selectedLocation]);
 
+  // Polling fallback while research is running
+  useEffect(() => {
+    if (queueStatus?.status === 'RUNNING') {
+      const timer = setInterval(() => {
+        refreshDashboardData(selectedLocation);
+      }, 3000);
+      return () => clearInterval(timer);
+    }
+  }, [queueStatus?.status, refreshDashboardData, selectedLocation]);
+
   const handleLocationChange = async (loc: LocationScope) => {
     setSelectedLocation(loc);
     try {

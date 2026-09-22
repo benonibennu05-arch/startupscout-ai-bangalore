@@ -14,6 +14,7 @@ import {
   SentEmailRecord,
   CandidateProfile,
   EmailProviderConfig,
+  LocationScope,
 } from '../types';
 
 export interface QueueStatusResponse {
@@ -167,7 +168,7 @@ export const api = {
     return res.json();
   },
 
-  async setLocation(location: 'BANGALORE' | 'HYDERABAD' | 'BOTH') {
+  async setLocation(location: LocationScope) {
     const res = await fetch('/api/research/location', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -231,10 +232,12 @@ export const api = {
     isNew?: boolean;
     isSaved?: boolean;
     userApplicationStatus?: string;
+    source?: string;
     sort?: string;
   } = {}): Promise<{ total: number; opportunities: (Opportunity & { publicEmail: string | null })[] }> {
     const query = new URLSearchParams();
     if (params.search) query.set('search', params.search);
+    if (params.source) query.set('source', params.source);
     if (params.category) query.set('category', params.category);
     if (params.aiMlRelevance) query.set('aiMlRelevance', params.aiMlRelevance);
     if (params.type) query.set('type', params.type);
@@ -380,12 +383,14 @@ export const api = {
   // Runs & Errors
   async getRuns(): Promise<ResearchRun[]> {
     const res = await fetch('/api/runs');
-    return res.json();
+    const json = await res.json();
+    return Array.isArray(json) ? json : (json.runs || []);
   },
 
   async getErrors(): Promise<ResearchError[]> {
     const res = await fetch('/api/errors');
-    return res.json();
+    const json = await res.json();
+    return Array.isArray(json) ? json : (json.errors || []);
   },
 
   async resolveError(id: string) {
@@ -846,8 +851,21 @@ export const api = {
     return res.json();
   },
 
-  async getGoogleAuthUrl(returnUrl = '/outreach'): Promise<{ authUrl?: string; error?: string; code?: string }> {
-    const res = await fetch(`/api/auth/google?json=true&returnUrl=${encodeURIComponent(returnUrl)}`);
+  async getOAuthDiagnostic(): Promise<any> {
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const res = await fetch(`/api/auth/google/diagnostics?origin=${encodeURIComponent(origin)}`);
+    return res.json();
+  },
+
+  async getOAuthDiagnostics(): Promise<any> {
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const res = await fetch(`/api/auth/google/diagnostics?origin=${encodeURIComponent(origin)}`);
+    return res.json();
+  },
+
+  async getGoogleAuthUrl(returnUrl = '/settings'): Promise<{ authUrl?: string; error?: string; code?: string; redirectUri?: string }> {
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const res = await fetch(`/api/auth/google?json=true&returnUrl=${encodeURIComponent(returnUrl)}&origin=${encodeURIComponent(origin)}`);
     return res.json();
   },
 
@@ -873,7 +891,14 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ toEmail }),
     });
-    return res.json();
+    const data = await res.json().catch(() => ({ success: false, message: 'Server returned invalid response' }));
+    if (!res.ok) {
+      return {
+        success: false,
+        message: data.message || data.error || `HTTP ${res.status}: Failed to send test email`,
+      };
+    }
+    return data;
   },
 
   async getOutreachSettings(): Promise<any> {

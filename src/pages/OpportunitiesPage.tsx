@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { Opportunity, OpportunityCategory, AiMlRelevance, LocationScope } from '../types';
 import { api } from '../services/api';
+import { getSourceBadge, getAtsProvider, getVerificationBadge } from '../utils/sourceBadges';
 
 interface OpportunitiesPageProps {
   onSelectOpportunity: (opp: Opportunity) => void;
@@ -67,6 +68,7 @@ export const OpportunitiesPage: React.FC<OpportunitiesPageProps> = ({
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string>(presetCategory || 'ALL');
+  const [sourceFilter, setSourceFilter] = useState<string>('ALL');
   const [aiFilter, setAiFilter] = useState<string>('ALL');
   const [typeFilter, setTypeFilter] = useState(presetType || 'ALL');
   const [expFilter, setExpFilter] = useState('ALL');
@@ -106,6 +108,7 @@ export const OpportunitiesPage: React.FC<OpportunitiesPageProps> = ({
       const res = await api.getOpportunities({
         search: search || undefined,
         category: categoryParam,
+        source: sourceFilter !== 'ALL' ? sourceFilter : undefined,
         aiMlRelevance: aiFilter !== 'ALL' ? (aiFilter as AiMlRelevance) : undefined,
         type: isInternshipOnly ? 'INTERNSHIP' : typeFilter !== 'ALL' ? typeFilter : undefined,
         isInternship: isInternshipOnly || undefined,
@@ -137,6 +140,7 @@ export const OpportunitiesPage: React.FC<OpportunitiesPageProps> = ({
   }, [
     search,
     activeCategory,
+    sourceFilter,
     aiFilter,
     typeFilter,
     expFilter,
@@ -241,6 +245,20 @@ export const OpportunitiesPage: React.FC<OpportunitiesPageProps> = ({
           </div>
 
           <div className="flex items-center flex-wrap gap-2">
+            {/* Source Filter */}
+            <select
+              value={sourceFilter}
+              onChange={(e) => setSourceFilter(e.target.value)}
+              className="text-xs font-semibold px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 focus:outline-hidden"
+            >
+              <option value="ALL">All Sources</option>
+              <option value="BANGALORE">Bangalore Startup Map</option>
+              <option value="HYDERABAD">Hyderabad Startup Map</option>
+              <option value="WHEREWEWORK">WhereWeWork.co.in</option>
+              <option value="FRONTLINES">Frontlines Media (302 Directory)</option>
+              <option value="OFFICIAL_CAREERS">Official Company Career Pages</option>
+            </select>
+
             {/* AI Relevance Filter */}
             <select
               value={aiFilter}
@@ -362,8 +380,8 @@ export const OpportunitiesPage: React.FC<OpportunitiesPageProps> = ({
               <thead className="bg-gray-50 border-b border-gray-200 text-gray-500 font-semibold uppercase tracking-wider text-[11px]">
                 <tr>
                   <th className="py-3 px-4 w-8"></th>
-                  <th className="py-3 px-4">Opportunity & Category</th>
-                  <th className="py-3 px-4">Company</th>
+                  <th className="py-3 px-4">Opportunity & Badges</th>
+                  <th className="py-3 px-4">Company & Source</th>
                   <th className="py-3 px-4">Type & Exp</th>
                   <th className="py-3 px-4">Skills & Profile Match</th>
                   <th className="py-3 px-4">Score</th>
@@ -392,15 +410,34 @@ export const OpportunitiesPage: React.FC<OpportunitiesPageProps> = ({
                       </button>
                     </td>
 
-                    {/* Opportunity & Category */}
+                    {/* Opportunity & Badges */}
                     <td className="py-3 px-4">
-                      <div className="flex items-center gap-1.5">
-                        <div className="font-bold text-gray-900">{opp.title}</div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-gray-900">{opp.title}</span>
                         {opp.isNew && (
                           <span className="px-1.5 py-0.2 rounded-md text-[9px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
                             NEW
                           </span>
                         )}
+                        {(() => {
+                          const ats = getAtsProvider(opp);
+                          if (!ats) return null;
+                          return (
+                            <span className="px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-cyan-50 text-cyan-800 border border-cyan-200 flex items-center gap-0.5">
+                              <Layers className="w-2.5 h-2.5" />
+                              {ats}
+                            </span>
+                          );
+                        })()}
+                        {(() => {
+                          const vBadge = getVerificationBadge(opp.verificationStatus);
+                          return (
+                            <span className={`px-1.5 py-0.2 rounded-md text-[9px] font-bold border flex items-center gap-0.5 ${vBadge.style}`}>
+                              <ShieldCheck className="w-2.5 h-2.5" />
+                              {vBadge.label}
+                            </span>
+                          );
+                        })()}
                       </div>
                       <div className="text-[11px] text-gray-500 flex items-center gap-2 pt-0.5">
                         <span className="font-medium px-1.5 py-0.2 bg-gray-100 rounded-sm text-gray-700">
@@ -412,11 +449,30 @@ export const OpportunitiesPage: React.FC<OpportunitiesPageProps> = ({
                       </div>
                     </td>
 
-                    {/* Company */}
+                    {/* Company & Source */}
                     <td className="py-3 px-4">
                       <div className="font-bold text-blue-700">{opp.companyName}</div>
-                      <div className="text-[10px] text-gray-500 font-medium">
-                        {opp.location?.toLowerCase().includes('hyderabad') ? 'Hyderabad Startup Map' : 'Bangalore Startup Map'}
+                      <div className="flex flex-col gap-0.5 pt-0.5">
+                        {(() => {
+                          const badge = getSourceBadge(opp);
+                          return (
+                            <>
+                              <a
+                                href={badge.url}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                onClick={(e) => e.stopPropagation()}
+                                className={`inline-flex items-center gap-1 px-2 py-0.2 rounded-full text-[10px] font-semibold border hover:underline w-fit ${badge.style}`}
+                              >
+                                {badge.label}
+                                <ExternalLink className="w-2.5 h-2.5" />
+                              </a>
+                              <span className="text-[9px] text-gray-400 font-medium truncate max-w-[160px]">
+                                {badge.provenance}
+                              </span>
+                            </>
+                          );
+                        })()}
                       </div>
                     </td>
 

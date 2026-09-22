@@ -180,12 +180,75 @@ const IGNORED_EXTENSIONS = [
   '.mp3',
 ];
 
+export const KNOWN_VALID_TLDS = new Set([
+  'com', 'in', 'io', 'ai', 'co', 'org', 'net', 'tech', 'dev', 'app', 'xyz', 'me', 'info',
+  'biz', 'cloud', 'agency', 'careers', 'global', 'world', 'link', 'online', 'site', 'store',
+  'space', 'live', 'studio', 'pro', 'security', 'academy', 'community', 'consulting',
+  'engineering', 'fund', 'holdings', 'industries', 'network', 'software', 'systems', 'technology',
+  'work', 'ventures', 'capital', 'vc', 'health', 'solutions', 'team', 'club', 'design', 'media',
+  'digital', 'life', 'care', 'supplies', 'finance', 'group', 'legal', 'law', 'education', 'school',
+  'travel', 'hotel', 'estate', 'exchange', 'market', 'events', 'press', 'news', 'center', 'city',
+  'us', 'uk', 'ca', 'au', 'de', 'fr', 'sg', 'ae', 'jp', 'kr', 'eu', 'asia',
+]);
+
+export const KNOWN_COMPOUND_TLDS = [
+  'co.in', 'org.in', 'net.in', 'ac.in', 'gov.in', 'gen.in', 'res.in', 'co.uk', 'org.uk', 'com.au', 'co.nz'
+];
+
+export const COMMON_CONCAT_WORDS = [
+  'why', 'ground', 'about', 'contact', 'home', 'careers', 'floor', 'road', 'terms', 'privacy',
+  'observeobserve', 'join', 'team', 'help', 'support', 'tel', 'phone', 'office', 'india',
+  'bangalore', 'bengaluru', 'hyderabad', 'mumbai', 'delhi', 'pune', 'chennai', 'login', 'signup'
+];
+
+/**
+ * Sanitizes an extracted email string, separating phone numbers concatenated to usernames
+ * and trailing words concatenated to domains.
+ */
+export function sanitizeExtractedEmail(raw: string): string | null {
+  if (!raw || typeof raw !== 'string') return null;
+  let clean = raw.trim().toLowerCase().replace(/^[<(\['"]+|[>)'\],;:]+$/g, '');
+  const parts = clean.split('@');
+  if (parts.length !== 2) return null;
+
+  let [user, domain] = parts;
+
+  // 1. Clean username:
+  // Detach phone number prefix if concatenated, e.g. 8884507072sales -> sales
+  const phoneMatch = user.match(/^(\+?\d{7,15})([a-z][a-z0-9._-]*)$/i);
+  if (phoneMatch) {
+    user = phoneMatch[2];
+  }
+  // Detach common prefix concatenation like uscareers -> careers
+  if (/^us(careers|jobs|info|contact|support|sales|hiring|team)$/i.test(user)) {
+    user = user.slice(2);
+  }
+
+  // 2. Clean domain:
+  domain = domain.replace(/^[<(\['"]+|[>)'\],;:]+$/g, '');
+
+  // Check for concatenated trailing words after known TLD:
+  // e.g. aerchain.ioground -> aerchain.io, licious.comwhy -> licious.com
+  for (const tld of ['com', 'in', 'io', 'ai', 'co', 'org', 'net', 'tech', 'dev', 'app', 'xyz']) {
+    const concatRegex = new RegExp(`(\\b${tld})([a-z]{3,})$`, 'i');
+    const m = domain.match(concatRegex);
+    if (m) {
+      domain = domain.slice(0, -m[2].length);
+      break;
+    }
+  }
+
+  const result = `${user}@${domain}`;
+  return isValidEmail(result) ? result : null;
+}
+
 /**
  * Validates whether an email string is well-formed and not an asset/system artifact
  */
 export function isValidEmail(email: string): boolean {
   if (!email || typeof email !== 'string') return false;
   const clean = email.trim().toLowerCase();
+  if (clean === 'not publicly available') return true;
   if (clean.length < 6 || clean.length > 90) return false;
   if (!/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(clean)) return false;
 
@@ -205,16 +268,35 @@ export function isValidEmail(email: string): boolean {
   // Check username constraints
   if (username.length < 2 || username.length > 50) return false;
   if (username.startsWith('.') || username.endsWith('.') || username.startsWith('-') || username.endsWith('-')) return false;
+
+  // Reject concatenated numbers (e.g. 7+ digits followed by word: 8884507072sales)
+  if (/^\d{7,}[a-zA-Z]/.test(username)) return false;
+  // Reject concatenated "uscareers", etc.
+  if (/^us(careers|jobs|info|contact|support|sales|hiring|team)$/i.test(username)) return false;
+
   if (IGNORED_USERNAMES.has(username)) return false;
 
   // Check domain constraints
   if (!domain.includes('.') || domain.startsWith('.') || domain.endsWith('.')) return false;
   if (IGNORED_DOMAINS.has(domain)) return false;
 
-  // Ensure TLD is at least 2 chars and letters only
+  // Extract TLD
   const domainParts = domain.split('.');
   const tld = domainParts[domainParts.length - 1];
   if (!tld || tld.length < 2 || !/^[a-zA-Z]+$/.test(tld)) return false;
+
+  // If compound TLD, check last 2 parts (e.g. co.in)
+  const compound = domainParts.length >= 2 ? `${domainParts[domainParts.length - 2]}.${tld}` : '';
+  const isCompoundValid = KNOWN_COMPOUND_TLDS.includes(compound);
+
+  // If TLD is not compound, ensure it's a known valid TLD or valid length <= 8 without garbage
+  if (!isCompoundValid) {
+    if (tld.length > 8 && !KNOWN_VALID_TLDS.has(tld)) return false;
+    // Reject known trailing concatenated words in TLD
+    for (const word of COMMON_CONCAT_WORDS) {
+      if (tld.endsWith(word) && tld !== word) return false;
+    }
+  }
 
   // Check for common dummy placeholder occurrences
   if (
@@ -448,6 +530,10 @@ export function extractPublicEmailsFromHtml(
 
   // Clone and strip non-human content elements to prevent minified JS/CSS syntax from matching email regex
   $('script, style, noscript, svg, iframe, template, link, meta, object, embed, code, pre').remove();
+  // Pad block and structural elements with whitespace so text extraction never merges adjacent tokens without spaces
+  $('br, p, div, span, a, li, tr, td, th, h1, h2, h3, h4, h5, h6, section, article, header, footer').each((_, el) => {
+    $(el).prepend(' ').append(' ');
+  });
   const pageText = $('body').text() || $.text() || '';
   const results = new Map<string, ExtractedEmail>();
 
@@ -466,7 +552,7 @@ export function extractPublicEmailsFromHtml(
   $('a[href^="mailto:"]').each((_, el) => {
     const rawHref = $(el).attr('href') || '';
     const rawEmail = rawHref.replace(/^mailto:/i, '').split('?')[0].trim();
-    const clean = rawEmail.toLowerCase();
+    const clean = sanitizeExtractedEmail(rawEmail) || rawEmail.toLowerCase();
 
     if (isValidEmail(clean)) {
       const linkText = $(el).text().trim();
@@ -499,11 +585,11 @@ export function extractPublicEmailsFromHtml(
   // 2. Process visible text exact email occurrences
   const textMatches = pageText.match(EMAIL_REGEX) || [];
   for (const raw of textMatches) {
-    const clean = raw.toLowerCase().trim().replace(/[.,;:)\]]+$/, '');
+    const clean = sanitizeExtractedEmail(raw) || raw.toLowerCase().trim().replace(/[.,;:)\]]+$/, '');
     if (isValidEmail(clean) && !results.has(clean)) {
       const snippet = extractContextSnippet(pageText, clean);
       const domain = clean.split('@')[1] || null;
-      const isExact = verifyExactMatchInSource(clean, pageText);
+      const isExact = verifyExactMatchInSource(clean, pageText) || verifyExactMatchInSource(clean, html);
       const emailType = classifyEmailType(clean, snippet);
       const confidence = calculateSourceQualityScore(defaultSourceType, clean, officialWebsite, isExact);
 

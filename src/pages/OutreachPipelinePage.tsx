@@ -30,6 +30,7 @@ import {
   Inbox,
   Flame,
   FileCheck,
+  Copy,
 } from 'lucide-react';
 import { api } from '../services/api';
 import {
@@ -86,6 +87,13 @@ export const OutreachPipelinePage: React.FC<OutreachPipelinePageProps> = ({
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
   const [testEmailAddress, setTestEmailAddress] = useState('tejamatta05@gmail.com');
   const [authConnecting, setAuthConnecting] = useState(false);
+  const [copiedOrigin, setCopiedOrigin] = useState(false);
+
+  const handleCopyOrigin = () => {
+    navigator.clipboard.writeText(window.location.origin);
+    setCopiedOrigin(true);
+    setTimeout(() => setCopiedOrigin(false), 2000);
+  };
 
   const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
     setToastMessage({ text, type });
@@ -211,6 +219,23 @@ export const OutreachPipelinePage: React.FC<OutreachPipelinePageProps> = ({
       showToast(err?.message || 'Failed to initiate Google OAuth', 'error');
     } finally {
       setAuthConnecting(false);
+      setActionLoading(false);
+    }
+  };
+
+  // Action: Connect Gmail via Server Full-Page Redirect
+  const handleConnectGmailRedirect = async () => {
+    try {
+      setActionLoading(true);
+      const res = await api.getGoogleAuthUrl(window.location.pathname);
+      if (res.authUrl) {
+        window.location.href = res.authUrl;
+      } else if (res.error) {
+        showToast(res.error, 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to initiate Google OAuth redirect', 'error');
+    } finally {
       setActionLoading(false);
     }
   };
@@ -1397,26 +1422,94 @@ export const OutreachPipelinePage: React.FC<OutreachPipelinePageProps> = ({
               <div className="space-y-2 text-gray-600">
                 <p className="font-medium text-gray-800">What happens when you connect?</p>
                 <ul className="list-disc pl-4 space-y-1 text-[11px]">
-                  <li>A secure Google sign-in popup will open.</li>
                   <li>Sign in with <strong>tejamatta05@gmail.com</strong>.</li>
                   <li>Grant permission to send emails on your behalf (<code className="bg-gray-100 px-1 py-0.5 rounded">gmail.send</code>).</li>
                   <li>No passwords are stored. All emails are dispatched through official Google APIs with your resume attached.</li>
                 </ul>
               </div>
 
-              <div className="pt-2">
+              {/* Origin & Redirect URI Configuration Helper */}
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-800 text-[11px]">Google Cloud OAuth 2.0 Credentials</span>
+                  <span className="text-[10px] text-slate-500 font-mono">Error 401 / Origin Diagnostics</span>
+                </div>
+
+                {emailStatus?.clientId && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] text-slate-600">
+                      <span>Configured Client ID in App:</span>
+                    </div>
+                    <div className="bg-white border border-slate-200 px-2 py-1 rounded font-mono text-[10px] text-slate-700 break-all select-all">
+                      {emailStatus.clientId}
+                    </div>
+                    <p className="text-[10px] text-amber-700">
+                      ⚠️ If you created a new OAuth client in Google Cloud Console, ensure this matches the Client ID generated in Google Console &gt; Credentials.
+                    </p>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <p className="text-[11px] text-slate-600">
+                    1. <strong>Authorized JavaScript origins</strong>:
+                  </p>
+                  <div className="flex items-center gap-1.5 bg-white border border-slate-200 px-2 py-1 rounded font-mono text-[10px] text-slate-800">
+                    <span className="truncate flex-1">{window.location.origin}</span>
+                    <button
+                      onClick={handleCopyOrigin}
+                      type="button"
+                      className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-sans text-[10px] shrink-0"
+                    >
+                      {copiedOrigin ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedOrigin ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <p className="text-[11px] text-slate-600">
+                    2. <strong>Authorized redirect URIs</strong>:
+                  </p>
+                  <div className="flex items-center gap-1.5 bg-white border border-slate-200 px-2 py-1 rounded font-mono text-[10px] text-slate-800">
+                    <span className="truncate flex-1">{`${window.location.origin}/api/auth/google/callback`}</span>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(`${window.location.origin}/api/auth/google/callback`);
+                        showToast('Redirect URI copied!', 'info');
+                      }}
+                      type="button"
+                      className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-sans text-[10px] shrink-0"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>Copy</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-1">
                 <button
-                  id="btn-modal-connect-gmail"
+                  id="btn-modal-connect-gmail-popup"
                   onClick={handleConnectGmail}
                   disabled={authConnecting || actionLoading}
-                  className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-xs transition cursor-pointer disabled:opacity-50"
+                  className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-xs transition cursor-pointer disabled:opacity-50"
                 >
                   {authConnecting ? (
                     <RefreshCw className="w-4 h-4 animate-spin" />
                   ) : (
                     <Sparkles className="w-4 h-4 text-blue-200" />
                   )}
-                  <span>{authConnecting ? 'Opening Google Sign-In...' : 'Connect Gmail Account (tejamatta05@gmail.com)'}</span>
+                  <span>{authConnecting ? 'Opening Google Sign-In...' : 'Connect via Google Popup'}</span>
+                </button>
+
+                <button
+                  id="btn-modal-connect-gmail-redirect"
+                  onClick={handleConnectGmailRedirect}
+                  disabled={authConnecting || actionLoading}
+                  className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 font-semibold transition cursor-pointer disabled:opacity-50 text-xs"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-gray-500" />
+                  <span>Or Connect via Server Redirect (Full Page)</span>
                 </button>
               </div>
             </div>

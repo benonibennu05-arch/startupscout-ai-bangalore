@@ -2,6 +2,7 @@ import { Company, ResearchRun, ResearchStage, ResearchMode, ActiveWorkerInfo, Re
 import { store } from '../database/store.ts';
 import { crawlBangaloreStartupMap } from '../crawler/startupMapCrawler.ts';
 import { crawlHyderabadStartupMap } from '../crawler/hyderabadStartupMapCrawler.ts';
+import { adapterRegistry } from '../adapters/adapterRegistry.ts';
 import { companyResearchService } from '../services/companyResearch.service.ts';
 import { verificationQueue } from './verificationQueue.ts';
 import { logger } from '../utils/logger.ts';
@@ -19,6 +20,7 @@ class ResearchQueueManager {
   private currentStage: ResearchStage = 'DISCOVER_COMPANIES';
   private abortController: AbortController | null = null;
   private listeners: Array<(data: any) => void> = [];
+  private forceRefresh: boolean = false;
 
   // Metrics tracking
   private runStartTime: number = 0;
@@ -113,32 +115,54 @@ class ResearchQueueManager {
 
   private normalizeLocation(loc?: string): LocationScope {
     if (!loc) return this.locationScope || 'BANGALORE';
-    const lower = loc.toLowerCase();
-    if (lower.includes('hyd')) return 'HYDERABAD';
-    if (lower.includes('both') || lower.includes('all')) return 'BOTH';
+    const upper = loc.toUpperCase();
+    if (upper.includes('HYD')) return 'HYDERABAD';
+    if (upper.includes('WHEREWEWORK')) return 'WHEREWEWORK';
+    if (upper.includes('FRONTLINES')) return 'FRONTLINES';
+    if (upper.includes('GLOBAL') || upper === 'ALL') return 'GLOBAL';
+    if (upper.includes('BOTH')) return 'BOTH';
     return 'BANGALORE';
   }
 
   private async discoverForLocation(location: LocationScope) {
-    if (location === 'HYDERABAD') {
-      const discovered = await crawlHyderabadStartupMap();
-      for (const item of discovered) {
-        store.upsertCompany({ ...item, sourceMap: 'HYDERABAD', location: item.location || 'Hyderabad, India' });
+    logger.info(`[ResearchQueue] Triggering fresh dynamic discovery for location scope: ${location}`);
+    try {
+      if (location === 'HYDERABAD') {
+        const adapter = adapterRegistry.get('hyderabad');
+        if (adapter) {
+          await adapter.sync({ forceFull: true });
+        } else {
+          const discovered = await crawlHyderabadStartupMap();
+          for (const item of discovered) {
+            store.upsertCompany({ ...item, sourceMap: 'HYDERABAD', location: item.location || 'Hyderabad, India' });
+          }
+        }
+      } else if (location === 'WHEREWEWORK') {
+        const adapter = adapterRegistry.get('wherewework');
+        if (adapter) await adapter.sync({ forceFull: true });
+      } else if (location === 'FRONTLINES') {
+        const adapter = adapterRegistry.get('frontlines');
+        if (adapter) await adapter.sync({ forceFull: true });
+      } else if (location === 'BOTH') {
+        const blr = adapterRegistry.get('bangalore');
+        const hyd = adapterRegistry.get('hyderabad');
+        if (blr) await blr.sync({ forceFull: true });
+        if (hyd) await hyd.sync({ forceFull: true });
+      } else if (location === 'ALL' || location === 'GLOBAL') {
+        await adapterRegistry.syncAll({ forceFull: true });
+      } else {
+        const blr = adapterRegistry.get('bangalore');
+        if (blr) {
+          await blr.sync({ forceFull: true });
+        } else {
+          const discovered = await crawlBangaloreStartupMap();
+          for (const item of discovered) {
+            store.upsertCompany({ ...item, sourceMap: 'BANGALORE', location: item.location || 'Bangalore, India' });
+          }
+        }
       }
-    } else if (location === 'BOTH') {
-      const blr = await crawlBangaloreStartupMap();
-      for (const item of blr) {
-        store.upsertCompany({ ...item, sourceMap: 'BANGALORE', location: item.location || 'Bangalore, India' });
-      }
-      const hyd = await crawlHyderabadStartupMap();
-      for (const item of hyd) {
-        store.upsertCompany({ ...item, sourceMap: 'HYDERABAD', location: item.location || 'Hyderabad, India' });
-      }
-    } else {
-      const discovered = await crawlBangaloreStartupMap();
-      for (const item of discovered) {
-        store.upsertCompany({ ...item, sourceMap: 'BANGALORE', location: item.location || 'Bangalore, India' });
-      }
+    } catch (err: any) {
+      logger.error(`[ResearchQueue] Discovery error for ${location}: ${err?.message}`);
     }
   }
 
@@ -172,6 +196,7 @@ class ResearchQueueManager {
     const pool = uncompleted.length >= 10 ? uncompleted : companies;
     const testBatch = pool.slice(0, 10);
     this.queue = testBatch.map((c) => c.id);
+    this.forceRefresh = true;
 
     const sourceMapValue: StartupMapSource = loc === 'HYDERABAD' ? 'HYDERABAD' : 'BANGALORE';
     this.currentRun = store.createResearchRun('TEST_10', testBatch.length);
@@ -179,6 +204,12 @@ class ResearchQueueManager {
     this.currentRun.concurrency = this.concurrency;
     this.currentRun.location = loc;
     this.currentRun.sourceMap = sourceMapValue;
+    store.updateResearchRun(this.currentRun.id, {
+      mode: this.mode,
+      concurrency: this.concurrency,
+      location: loc,
+      sourceMap: sourceMapValue,
+    });
 
     store.addEvent({
       companyId: 'queue',
@@ -233,6 +264,7 @@ class ResearchQueueManager {
 
     const finalQueue = toQueue.length > 0 ? toQueue : allCompanies;
     this.queue = finalQueue.map((c) => c.id);
+    this.forceRefresh = forceRefresh;
 
     const sourceMapValue: StartupMapSource = loc === 'HYDERABAD' ? 'HYDERABAD' : 'BANGALORE';
     this.currentRun = store.createResearchRun('FULL_MAP', finalQueue.length);
@@ -240,6 +272,12 @@ class ResearchQueueManager {
     this.currentRun.concurrency = this.concurrency;
     this.currentRun.location = loc;
     this.currentRun.sourceMap = sourceMapValue;
+    store.updateResearchRun(this.currentRun.id, {
+      mode: this.mode,
+      concurrency: this.concurrency,
+      location: loc,
+      sourceMap: sourceMapValue,
+    });
 
     const mapLabel = loc === 'HYDERABAD' ? 'Hyderabad Startups Map' : loc === 'BOTH' ? 'Bangalore & Hyderabad Maps' : 'Bangalore Startup Map';
     store.addEvent({
@@ -353,13 +391,37 @@ class ResearchQueueManager {
     return this.getStatus(loc);
   }
 
-  // --- Start Incremental Research: Only uncompleted, stale, or changed companies ---
-  public async startIncrementalResearch(mode: ResearchMode = 'FAST', concurrency: number = 10, location?: LocationScope | string) {
+  // --- Start Incremental Research: Only uncompleted, stale, or changed companies (or specific IDs) ---
+  public async startIncrementalResearch(
+    companyIdsOrMode: string[] | ResearchMode = 'FAST',
+    optionsOrConcurrency: { mode?: ResearchMode; concurrency?: number; location?: LocationScope | string } | number = 10,
+    location?: LocationScope | string
+  ) {
     if (this.status === 'RUNNING') {
       throw new Error('Research is already running. Please pause or stop first.');
     }
 
-    const loc = this.normalizeLocation(location);
+    let specificCompanyIds: string[] | undefined = undefined;
+    let mode: ResearchMode = 'FAST';
+    let concurrency = 10;
+    let locParam: LocationScope | string | undefined = location;
+
+    if (Array.isArray(companyIdsOrMode)) {
+      specificCompanyIds = companyIdsOrMode;
+      if (typeof optionsOrConcurrency === 'object' && optionsOrConcurrency !== null) {
+        mode = optionsOrConcurrency.mode || 'FAST';
+        concurrency = optionsOrConcurrency.concurrency || 10;
+        locParam = optionsOrConcurrency.location || location;
+      }
+    } else {
+      mode = (companyIdsOrMode as ResearchMode) || 'FAST';
+      if (typeof optionsOrConcurrency === 'number') {
+        concurrency = optionsOrConcurrency;
+      }
+      locParam = location;
+    }
+
+    const loc = this.normalizeLocation(locParam);
     this.locationScope = loc;
     this.mode = mode;
     this.concurrency = Math.max(2, Math.min(25, concurrency));
@@ -372,21 +434,29 @@ class ResearchQueueManager {
     this.rateLimitedCount = 0;
     this.abortController = new AbortController();
 
-    const allCompanies = store.getCompanies({ location: loc });
-    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    let finalQueueIds: string[] = [];
 
-    // Filter to companies that need research: not completed, failed, or researched > 7 days ago
-    const toQueue = allCompanies.filter((c) => {
-      if (c.status !== 'COMPLETED') return true;
-      if (!c.lastResearchedAt) return true;
-      const last = new Date(c.lastResearchedAt).getTime();
-      return isNaN(last) || last < sevenDaysAgo;
-    });
+    if (specificCompanyIds && specificCompanyIds.length > 0) {
+      finalQueueIds = specificCompanyIds;
+    } else {
+      const allCompanies = store.getCompanies({ location: loc });
+      const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
-    const finalQueue = toQueue.length > 0 ? toQueue : allCompanies.slice(0, 20);
-    this.queue = finalQueue.map((c) => c.id);
+      // Filter to companies that need research: not completed, failed, or researched > 7 days ago
+      const toQueue = allCompanies.filter((c) => {
+        if (c.status !== 'COMPLETED') return true;
+        if (!c.lastResearchedAt) return true;
+        const last = new Date(c.lastResearchedAt).getTime();
+        return isNaN(last) || last < sevenDaysAgo;
+      });
 
-    this.currentRun = store.createResearchRun('CUSTOM_SELECTION', finalQueue.length);
+      const finalQueue = toQueue.length > 0 ? toQueue : allCompanies.slice(0, 20);
+      finalQueueIds = finalQueue.map((c) => c.id);
+    }
+
+    this.queue = finalQueueIds;
+
+    this.currentRun = store.createResearchRun('CUSTOM_SELECTION', finalQueueIds.length);
     this.currentRun.mode = this.mode;
     this.currentRun.concurrency = this.concurrency;
     this.currentRun.location = loc;
@@ -395,7 +465,7 @@ class ResearchQueueManager {
       companyId: 'queue',
       companyName: 'Research Queue',
       event: 'INCREMENTAL_RESEARCH_STARTED',
-      message: `Started Incremental Research for ${finalQueue.length} ${loc} startups requiring updates (${this.concurrency} workers, ${this.mode} mode).`,
+      message: `Started Incremental Research for ${finalQueueIds.length} ${loc} startups requiring updates (${this.concurrency} workers, ${this.mode} mode).`,
       stage: 'RESEARCH_COMPANY',
       type: 'info',
     });
@@ -437,11 +507,20 @@ class ResearchQueueManager {
 
     const finalQueue = newOnly.length > 0 ? newOnly : allCompanies.slice(0, 10);
     this.queue = finalQueue.map((c) => c.id);
+    this.forceRefresh = true;
 
+    const sourceMapValue: StartupMapSource = loc === 'HYDERABAD' ? 'HYDERABAD' : 'BANGALORE';
     this.currentRun = store.createResearchRun('CUSTOM_SELECTION', finalQueue.length);
     this.currentRun.mode = this.mode;
     this.currentRun.concurrency = this.concurrency;
     this.currentRun.location = loc;
+    this.currentRun.sourceMap = sourceMapValue;
+    store.updateResearchRun(this.currentRun.id, {
+      mode: this.mode,
+      concurrency: this.concurrency,
+      location: loc,
+      sourceMap: sourceMapValue,
+    });
 
     store.addEvent({
       companyId: 'queue',
@@ -514,11 +593,19 @@ class ResearchQueueManager {
       try {
         const result = await companyResearchService.researchCompany(company, {
           mode: this.mode,
+          forceRefresh: this.forceRefresh || company.status !== 'COMPLETED',
         });
 
         this.completedInRun += 1;
         this.totalDurationsMs += result.durationMs;
         this.geminiCallsCount += result.geminiCalls;
+
+        this.broadcast('COMPANY_UPDATED', {
+          companyId: company.id,
+          companyName: company.name,
+          opportunitiesCount: result.opportunities.length,
+          contactsCount: result.contacts.length,
+        });
 
         // Update run stats in store
         if (this.currentRun) {
@@ -563,10 +650,12 @@ class ResearchQueueManager {
     if (this.status === 'RUNNING' && this.queue.length === 0 && this.activeWorkers.size === 0) {
       this.status = 'IDLE';
       this.currentStage = 'COMPLETE';
+      const durationSeconds = this.runStartTime > 0 ? Math.round((Date.now() - this.runStartTime) / 1000) : 0;
       if (this.currentRun) {
         store.updateResearchRun(this.currentRun.id, {
           status: 'COMPLETED',
           completedAt: new Date().toISOString(),
+          durationSeconds,
         });
       }
 

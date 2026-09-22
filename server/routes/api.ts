@@ -22,6 +22,7 @@ export const apiRouter = Router();
 
 // Sub-routers
 apiRouter.use('/health', healthRouter);
+apiRouter.use('/system/health', healthRouter);
 apiRouter.use('/companies', companiesRouter);
 apiRouter.use('/opportunities', opportunitiesRouter);
 apiRouter.use('/contacts', contactsRouter);
@@ -105,7 +106,66 @@ apiRouter.get('/events/stream', (req, res) => {
   });
 });
 
-// --- Monitoring Endpoints ---
+// --- WhereWeWork Specific Endpoints ---
+apiRouter.get('/sources/wherewework/status', async (_req, res) => {
+  const { whereWeWorkAdapter } = await import('../adapters/whereWeWork.adapter.ts');
+  const status = whereWeWorkAdapter.getStatus();
+  const opps = store.getOpportunities({ location: 'WHEREWEWORK' });
+  const companies = store.getCompanies({ location: 'WHEREWEWORK' });
+  res.json({
+    success: true,
+    status,
+    totalDiscoveredCompanies: status.totalDiscovered,
+    storedCompanies: companies.length,
+    opportunitiesIndexed: opps.length,
+    internshipsIndexed: opps.filter((o) => o.type === 'INTERNSHIP' || o.experienceLevel === 'INTERN').length,
+  });
+});
+
+apiRouter.post('/sources/wherewework/sync', async (req, res) => {
+  try {
+    const { whereWeWorkAdapter } = await import('../adapters/whereWeWork.adapter.ts');
+    const syncResult = await whereWeWorkAdapter.sync({
+      forceFull: req.body.forceFull ?? true,
+      syncJobs: req.body.syncJobs ?? true,
+    });
+    res.json({ success: true, ...syncResult });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'WhereWeWork sync failed' });
+  }
+});
+
+// --- Monitoring & Source Discovery Endpoints ---
+apiRouter.get('/sources/stats', (_req, res) => {
+  res.json({
+    success: true,
+    ...store.getSourceStats(),
+  });
+});
+
+apiRouter.get('/sources/status', (_req, res) => {
+  const sources = store.getMonitoringSources();
+  const runs = store.getMonitoringRuns();
+  const sourceStats = store.getSourceStats();
+  res.json({
+    success: true,
+    totalSources: sources.length,
+    sources,
+    sourceStats,
+    lastRun: runs[0] || null,
+  });
+});
+
+apiRouter.post('/sources/sync-all', async (req, res) => {
+  const scope = (req.body.scope || 'ALL') as any;
+  try {
+    const result = await store.syncSource(scope);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Sync all sources failed' });
+  }
+});
+
 apiRouter.get('/monitoring/status', (req, res) => {
   const runs = store.getMonitoringRuns();
   const sources = store.getMonitoringSources();
